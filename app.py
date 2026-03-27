@@ -4,14 +4,14 @@ import sys
 import pickle
 
 # Importações Módulo OdyC (SCADA)
-from data_processing_geral import load_and_process_geral, salvar_cenario_geral_no_banco
+from data_processing import load_and_process_data, salvar_cenario_odyc_no_banco
 from datetime import datetime # Vamos precisar disso para gerar nomes de versões
 from visualizations import render_gantt, render_heatmap, render_dashboard, render_changelog
 from editor import render_editor
 from editor_matricial import render_editor_matricial
 
 # Importações Módulo Geral (Workload)
-from data_processing_geral import load_and_process_geral
+from data_processing_geral import load_and_process_geral, salvar_cenario_geral_no_banco
 from visualizations_geral import render_dashboard_geral, render_gantt_geral, render_heatmap_geral, render_changelog_geral
 from editor_geral import render_editor_geral
 from editor_matricial_geral import render_editor_matricial_geral
@@ -253,16 +253,16 @@ elif modo == "Workload Geral":
             st.rerun()
 
     if st.sidebar.button("💾 Salvar Nova Versão no Banco"):
-    if 'df_geral' in st.session_state:
-        autor = st.session_state.get("usuario_logado", "Sistema")
-        data_hora = datetime.now().strftime('%d/%m/%Y %H:%M')
-        
-        novo_id = salvar_cenario_geral_no_banco(st.session_state['df_geral'], nome_cenario=f"Versão Geral {data_hora}", autor=autor)
-        
-        st.session_state['cenario_geral_id'] = novo_id
-        st.sidebar.success(f"Nova versão salva no Banco de Dados! (ID: {novo_id})")
-    else:
-        st.sidebar.warning("Nenhum dado para salvar.")
+        if 'df_geral' in st.session_state:
+            autor = st.session_state.get("usuario_logado", "Sistema")
+            data_hora = datetime.now().strftime('%d/%m/%Y %H:%M')
+            
+            novo_id = salvar_cenario_geral_no_banco(st.session_state['df_geral'], nome_cenario=f"Versão Geral {data_hora}", autor=autor)
+            
+            st.session_state['cenario_geral_id'] = novo_id
+            st.sidebar.success(f"Nova versão salva no Banco de Dados! (ID: {novo_id})")
+        else:
+            st.sidebar.warning("Nenhum dado para salvar.")
             
     st.sidebar.markdown("---")
     st.sidebar.header("📸 Gestão de Baseline")

@@ -10,7 +10,7 @@ def extract_ids(dependency_string):
     parts = str(dependency_string).split(';')
     ids = []
     for p in parts:
-        match = re.match(r'^[\d\.]+', str(p).strip())å
+        match = re.match(r'^[\d\.]+', str(p).strip())
         if match: 
             ids.append(match.group())
     return ids
