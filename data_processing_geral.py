@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from database import SessionLocal, Scenario, TaskGeral
 from datetime import datetime
 
 def load_and_process_geral(arquivo_geral):
@@ -54,3 +55,52 @@ def load_and_process_geral(arquivo_geral):
     df_alocacao['RTC_ID'] = ""
     
     return df_alocacao, df_capacidade
+
+def salvar_cenario_geral_no_banco(df_alocacao, nome_cenario="Baseline Inicial Geral", autor="Sistema"):
+    """
+    Pega o DataFrame Geral processado e salva no banco de dados SQLite.
+    """
+    db = SessionLocal()
+    
+    try:
+        # 1. Cria o Cenário
+        novo_cenario = Scenario(
+            name=nome_cenario,
+            mode="Geral",
+            author=autor,
+            is_baseline=True
+        )
+        db.add(novo_cenario)
+        db.commit()
+        db.refresh(novo_cenario)
+        
+        # 2. Converte o DataFrame para dicionários
+        registros = df_alocacao.to_dict(orient='records')
+        
+        # 3. Cria os objetos TaskGeral
+        tarefas_para_salvar = []
+        for row in registros:
+            tarefa = TaskGeral(
+                scenario_id=novo_cenario.id,
+                project_name=str(row.get('Project Name', '')),
+                activity_name=str(row.get('Activity Name', '')),
+                cost_center_name=str(row.get('CostCenter Name', '')),
+                resource_name=str(row.get('Resource Name', '')),
+                planned_start=pd.to_datetime(row.get('Planned start')) if pd.notnull(row.get('Planned start')) else None,
+                planned_finish=pd.to_datetime(row.get('Planned finish')) if pd.notnull(row.get('Planned finish')) else None,
+                workload_hours=float(row.get('Horas_Alocadas', 0))
+            )
+            tarefas_para_salvar.append(tarefa)
+            
+        # 4. Salva tudo de uma vez
+        db.bulk_save_objects(tarefas_para_salvar)
+        db.commit()
+        print(f"Sucesso! {len(tarefas_para_salvar)} tarefas do Workload Geral salvas no cenário '{nome_cenario}'.")
+        return novo_cenario.id
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Erro ao salvar no banco Geral: {e}")
+        return None
+    finally:
+        db.close()

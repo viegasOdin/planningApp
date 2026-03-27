@@ -4,7 +4,8 @@ import sys
 import pickle
 
 # Importações Módulo OdyC (SCADA)
-from data_processing import load_and_process_data
+from data_processing_geral import load_and_process_geral, salvar_cenario_geral_no_banco
+from datetime import datetime # Vamos precisar disso para gerar nomes de versões
 from visualizations import render_gantt, render_heatmap, render_dashboard, render_changelog
 from editor import render_editor
 from editor_matricial import render_editor_matricial
@@ -48,6 +49,7 @@ def check_login():
                 if submit:
                     if usuario in USUARIOS and USUARIOS[usuario] == senha:
                         st.session_state["logado"] = True
+                        st.session_state["usuario_logado"] = usuario 
                         st.success("Acesso liberado! Carregando...")
                         st.rerun()
                     else:
@@ -162,6 +164,13 @@ if modo == "OdyC":
             try:
                 if tem_arquivos and 'df_original' not in st.session_state:
                     df_master, df_capacidade = load_and_process_data(arquivo_wkl, arquivo_schedule)
+
+                    # --- NOVIDADE: SALVA NO BANCO DE DADOS ---
+                    autor = st.session_state.get("usuario_logado", "Sistema")
+                    cenario_id = salvar_cenario_odyc_no_banco(df_master, nome_cenario="Carga Inicial Excel", autor=autor)
+                    st.session_state['cenario_odyc_id'] = cenario_id # Guarda o ID atual
+                    # -----------------------------------------
+
                     st.session_state['df_original'] = df_master.copy()
                     st.session_state['df_simulado'] = df_master.copy()
                     st.session_state['df_capacidade'] = df_capacidade.copy()
@@ -243,17 +252,17 @@ elif modo == "Workload Geral":
             st.sidebar.success("Projeto Geral local carregado com sucesso!")
             st.rerun()
 
-    if st.sidebar.button("💾 Salvar Projeto Atual"):
-        if 'df_geral' in st.session_state:
-            with open(ARQUIVO_PERSISTENCIA_GERAL, 'wb') as f:
-                pickle.dump({
-                    'df_geral': st.session_state['df_geral'],
-                    'df_original_geral': st.session_state['df_original_geral'],
-                    'df_cap_geral': st.session_state['df_cap_geral']
-                }, f)
-            st.sidebar.success(f"Projeto Geral salvo localmente em: {BASE_DIR}")
-        else:
-            st.sidebar.warning("Nenhum dado para salvar.")
+    if st.sidebar.button("💾 Salvar Nova Versão no Banco"):
+    if 'df_geral' in st.session_state:
+        autor = st.session_state.get("usuario_logado", "Sistema")
+        data_hora = datetime.now().strftime('%d/%m/%Y %H:%M')
+        
+        novo_id = salvar_cenario_geral_no_banco(st.session_state['df_geral'], nome_cenario=f"Versão Geral {data_hora}", autor=autor)
+        
+        st.session_state['cenario_geral_id'] = novo_id
+        st.sidebar.success(f"Nova versão salva no Banco de Dados! (ID: {novo_id})")
+    else:
+        st.sidebar.warning("Nenhum dado para salvar.")
             
     st.sidebar.markdown("---")
     st.sidebar.header("📸 Gestão de Baseline")
@@ -283,6 +292,9 @@ elif modo == "Workload Geral":
             try:
                 if tem_arquivos_geral and 'df_original_geral' not in st.session_state:
                     df_alocacao, df_capacidade = load_and_process_geral(arquivo_geral)
+                    autor = st.session_state.get("usuario_logado", "Sistema")
+                    cenario_id = salvar_cenario_geral_no_banco(df_alocacao, nome_cenario="Carga Inicial Geral Excel", autor=autor)
+                    st.session_state['cenario_geral_id'] = cenario_id
                     st.session_state['df_original_geral'] = df_alocacao.copy()
                     st.session_state['df_geral'] = df_alocacao.copy()
                     st.session_state['df_cap_geral'] = df_capacidade.copy()

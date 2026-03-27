@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+from database import SessionLocal, Scenario, TaskOdyc
+from datetime import datetime
 
 def load_and_process_data(arquivo_wkl, arquivo_schedule):
     df_wkl = pd.read_excel(arquivo_wkl, sheet_name="DB_WKL")
@@ -57,3 +59,52 @@ def load_and_process_data(arquivo_wkl, arquivo_schedule):
     df_master['RTC_ID'] = ""
     
     return df_master, df_capacidade
+
+def salvar_cenario_odyc_no_banco(df_master, nome_cenario="Baseline Inicial", autor="Sistema"):
+    """
+    Pega o DataFrame OdyC processado e salva no banco de dados SQLite.
+    """
+    db = SessionLocal()
+    
+    try:
+        # 1. Cria o Cenário
+        novo_cenario = Scenario(
+            name=nome_cenario,
+            mode="OdyC",
+            author=autor,
+            is_baseline=True
+        )
+        db.add(novo_cenario)
+        db.commit()
+        db.refresh(novo_cenario)
+        
+        # 2. Converte o DataFrame para dicionários
+        registros = df_master.to_dict(orient='records')
+        
+        # 3. Cria os objetos TaskOdyc
+        tarefas_para_salvar = []
+        for row in registros:
+            tarefa = TaskOdyc(
+                scenario_id=novo_cenario.id,
+                project_name=str(row.get('Project Name', '')),
+                task_code=str(row.get('Task Code', '')),
+                line_identifier=str(row.get('Line identifier', '')),
+                resource_name=str(row.get('Resource Name', '')),
+                planned_start=pd.to_datetime(row.get('Planned start')) if pd.notnull(row.get('Planned start')) else None,
+                planned_finish=pd.to_datetime(row.get('Planned finish')) if pd.notnull(row.get('Planned finish')) else None,
+                workload_hours=float(row.get('Horas_Alocadas', 0))
+            )
+            tarefas_para_salvar.append(tarefa)
+            
+        # 4. Salva tudo de uma vez
+        db.bulk_save_objects(tarefas_para_salvar)
+        db.commit()
+        print(f"Sucesso! {len(tarefas_para_salvar)} tarefas OdyC salvas no cenário '{nome_cenario}'.")
+        return novo_cenario.id
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Erro ao salvar no banco OdyC: {e}")
+        return None
+    finally:
+        db.close()
