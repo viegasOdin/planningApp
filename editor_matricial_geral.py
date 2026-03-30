@@ -1,12 +1,16 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from utils import registrar_log  # <-- NOVIDADE: Importando nosso espião de logs
 
 def render_editor_matricial_geral():
     st.subheader("📁 Visão e Edição Matricial por Projeto")
     st.write("Edite as horas diretamente. A tabela exibe a partir do mês inicial até **4 meses depois** da última entrega. Use os filtros de data para focar em um período específico.")
     
     df_geral = st.session_state['df_geral']
+    
+    # Pega o nome do usuário logado para colocar no Log
+    usuario = st.session_state.get("usuario_logado", "Desconhecido") 
     
     col1, col2 = st.columns(2)
     projetos = ["Todos"] + sorted(df_geral['Project Name'].dropna().unique().tolist())
@@ -115,12 +119,27 @@ def render_editor_matricial_geral():
             if df_changed.empty:
                 st.warning("Nenhuma alteração detectada.")
             else:
+                mudancas_feitas = 0
+                
                 for _, row in df_changed.iterrows():
                     p_name = row['Project Name']
                     a_name = row['Activity Name']
                     rec = row['Resource Name']
                     mes = row['Mes']
                     nova_hora = row['Horas_Alocadas_novo']
+                    hora_antiga = row['Horas_Alocadas_orig']
+                    
+                    # --- REGISTRO DE LOG ---
+                    registrar_log(
+                        user_id=usuario,
+                        action="UPDATE",
+                        table_affected="tasks_geral",
+                        record_id=f"{p_name} | {a_name}",
+                        field_changed=f"Matriz: Horas de {rec} em {mes}",
+                        old_value=f"{hora_antiga}h",
+                        new_value=f"{nova_hora}h"
+                    )
+                    mudancas_feitas += 1
                     
                     mask = (df_novo['Project Name'] == p_name) & (df_novo['Activity Name'] == a_name) & (df_novo['Resource Name'] == rec) & (df_novo['Mes'] == mes)
                     
@@ -167,10 +186,11 @@ def render_editor_matricial_geral():
                     if any(key.startswith(p) for p in prefixos):
                         del st.session_state[key]
                 
-                keys_to_keep = ['df_simulado', 'df_original', 'df_capacidade', 'ignored_conflicts', 'df_geral', 'df_original_geral', 'df_cap_geral', 'df_baseline_geral', 'logado', 'seletor_modo_global']
+                # Adicionado 'usuario_logado' aqui para não perder a sessão no log
+                keys_to_keep = ['df_simulado', 'df_original', 'df_capacidade', 'ignored_conflicts', 'df_geral', 'df_original_geral', 'df_cap_geral', 'df_baseline_geral', 'logado', 'seletor_modo_global', 'usuario_logado']
                 for key in list(st.session_state.keys()):
                     if key not in keys_to_keep and not key.startswith('FormSubmitter'):
                         del st.session_state[key]
                         
-                st.success("✅ Alterações salvas e datas recalculadas com sucesso!")
+                st.success(f"✅ {mudancas_feitas} alterações salvas e datas recalculadas com sucesso!")
                 st.rerun()

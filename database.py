@@ -82,7 +82,7 @@ class AuditLog(Base):
     user_id = Column(String, nullable=False) # Quem alterou
     action = Column(String) # "CREATE", "UPDATE", "DELETE"
     table_affected = Column(String) # "tasks_odyc" ou "tasks_geral"
-    record_id = Column(Integer) # ID da tarefa alterada
+    record_id = Column(String) # ID da tarefa alterada
     field_changed = Column(String) # Ex: "planned_finish"
     old_value = Column(String)
     new_value = Column(String)

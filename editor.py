@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import re
 import math
+from utils import registrar_log
 
 def extract_ids(dependency_string):
     if pd.isna(dependency_string) or str(dependency_string).strip() == '': 
@@ -25,6 +26,9 @@ def clear_ui_state():
 def render_editor():
     st.subheader("✏️ Simulador de Cenários Avançado")
     df_simulado = st.session_state['df_simulado']
+    
+    # Pega o nome do usuário logado para colocar no Log
+    usuario = st.session_state.get("usuario_logado", "Desconhecido") 
     
     if 'Line identifier' not in df_simulado.columns:
         st.error("⚠️ A coluna 'Line identifier' não foi encontrada. Recarregue os dados originais.")
@@ -77,9 +81,11 @@ def render_editor():
                 df_meses = df_dias.groupby('Mes')['Horas'].sum().reset_index()
                 
                 novas_linhas = []
+                novo_id_linha = f"NEW-{np.random.randint(1000,9999)}"
+                
                 for _, row_mes in df_meses.iterrows():
                     novas_linhas.append({
-                        'Line identifier': f"NEW-{np.random.randint(1000,9999)}",
+                        'Line identifier': novo_id_linha,
                         'Task Code': novo_task_code,
                         'Activity Name': novo_activity,
                         'Resource Name': novo_rec,
@@ -92,6 +98,18 @@ def render_editor():
                     })
                     
                 st.session_state['df_simulado'] = pd.concat([df_simulado, pd.DataFrame(novas_linhas)], ignore_index=True)
+                
+                # --- REGISTRO DE LOG ---
+                registrar_log(
+                    user_id=usuario,
+                    action="CREATE",
+                    table_affected="tasks_odyc",
+                    record_id=novo_id_linha,
+                    field_changed="Nova Tarefa",
+                    old_value="",
+                    new_value=f"{novas_horas}h para {novo_rec}"
+                )
+                
                 st.success("Tarefa criada com sucesso! O aplicativo será recarregado...")
                 clear_ui_state()
                 st.rerun()
@@ -262,6 +280,18 @@ def render_editor():
                                 df_novo = pd.concat([df_novo, pd.DataFrame(novas_linhas)], ignore_index=True)
                                 
                             st.session_state['df_simulado'] = df_novo
+                            
+                            # --- REGISTRO DE LOG ---
+                            registrar_log(
+                                user_id=usuario,
+                                action="UPDATE",
+                                table_affected="tasks_odyc",
+                                record_id=edit_task_code,
+                                field_changed="Edição em Lote (Recursos/Horas)",
+                                old_value="Valores antigos",
+                                new_value="Novos valores de simulação"
+                            )
+                            
                             st.success("✅ Simulação salva!")
                             clear_ui_state()
                             st.rerun()
@@ -287,7 +317,10 @@ def render_editor():
                     df_visao['RTC_ID'] = ""
                     
                 df_visao_show = df_visao[['Line identifier', 'Task Code', 'Activity Name', 'Resource Name', 'Planned start', 'Planned finish', 'Horas_Alocadas', 'RTC_ID']].copy()
-                df_visao_show = df_visao_show.sort_values('Horas_Alocadas', ascending=False)
+                
+                # CORREÇÃO: reset_index(drop=True) zera o índice para 0, 1, 2...
+                # Isso evita o erro "single positional indexer is out-of-bounds"
+                df_visao_show = df_visao_show.sort_values('Horas_Alocadas', ascending=False).reset_index(drop=True)
                 
                 st.success(f"Total de horas alocadas: **{df_visao_show['Horas_Alocadas'].sum():.1f}h**")
                 
@@ -316,6 +349,8 @@ def render_editor():
                         if 'RTC_ID' not in df_novo.columns:
                             df_novo['RTC_ID'] = ""
                         
+                        mudancas_feitas = 0
+                        
                         for idx, row in df_editado_visao.iterrows():
                             l_id = row['Line identifier']
                             t_code = row['Task Code']
@@ -325,6 +360,26 @@ def render_editor():
                             novo_fim = row['Planned finish']
                             novas_horas = row['Horas_Alocadas']
                             novo_rtc = row['RTC_ID']
+                            
+                            # Verifica se houve mudança para logar
+                            linha_antiga = df_visao_show.iloc[idx]
+                            if (linha_antiga['Resource Name'] != novo_rec or 
+                                linha_antiga['Horas_Alocadas'] != novas_horas or
+                                linha_antiga['Planned start'] != novo_inicio or
+                                linha_antiga['Planned finish'] != novo_fim or
+                                linha_antiga['RTC_ID'] != novo_rtc):
+                                
+                                mudancas_feitas += 1
+                                # --- REGISTRO DE LOG ---
+                                registrar_log(
+                                    user_id=usuario,
+                                    action="UPDATE",
+                                    table_affected="tasks_odyc",
+                                    record_id=str(l_id),
+                                    field_changed="Visão Mensal",
+                                    old_value=f"{linha_antiga['Horas_Alocadas']}h",
+                                    new_value=f"{novas_horas}h"
+                                )
                             
                             mask_linha = (df_novo['Line identifier'] == l_id) & \
                                          (df_novo['Task Code'] == t_code) & \
@@ -349,7 +404,7 @@ def render_editor():
                             df_novo.loc[mask_tarefa, 'RTC_ID'] = novo_rtc
                             
                         st.session_state['df_simulado'] = df_novo
-                        st.success("✅ Alterações salvas com sucesso!")
+                        st.success(f"✅ {mudancas_feitas} alterações salvas com sucesso!")
                         clear_ui_state()
                         st.rerun()
             else:
@@ -423,6 +478,18 @@ def render_editor():
                             df_novo = pd.concat([df_novo, pd.DataFrame(novas_linhas)], ignore_index=True)
                             
                         st.session_state['df_simulado'] = df_novo
+                        
+                        # --- REGISTRO DE LOG ---
+                        registrar_log(
+                            user_id=usuario,
+                            action="UPDATE",
+                            table_affected="tasks_odyc",
+                            record_id=t_code,
+                            field_changed="Distribuição Manual",
+                            old_value=f"{df_meses_edit['Horas_Alocadas'].sum():.1f}h",
+                            new_value=f"{df_meses_editado['Horas_Alocadas'].sum():.1f}h"
+                        )
+                        
                         st.success("✅ Distribuição salva com sucesso!")
                         clear_ui_state()
                         st.rerun()

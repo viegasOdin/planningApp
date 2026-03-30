@@ -3,6 +3,7 @@ import plotly.express as px
 import pandas as pd
 import numpy as np
 import re
+from database import SessionLocal, AuditLog  # <-- NOVIDADE: Importando o banco de dados
 
 def extract_ids(dependency_string):
     if pd.isna(dependency_string) or str(dependency_string).strip() == '':
@@ -66,100 +67,62 @@ def render_dashboard(df_master, key_suffix=""):
         st.plotly_chart(fig_rec, use_container_width=True, key=f"dash_rec_{key_suffix}")
 
 def render_changelog(df_original, df_simulado):
-    st.subheader("⚠️ Resumo de Alterações e Alertas")
-    st.write("Audite as mudanças, reverta cenários, ignore falsos positivos e exporte o relatório.")
+    st.subheader("🕵️‍♂️ Histórico de Auditoria (Logs)")
+    st.write("Acompanhe todas as alterações feitas no sistema, quem fez e quando.")
     
-    if 'ignored_conflicts' not in st.session_state:
-        st.session_state['ignored_conflicts'] = []
+    # --- NOVIDADE: BUSCA DIRETO DO BANCO DE DADOS ---
+    db = SessionLocal()
+    try:
+        # Busca os logs da tabela OdyC, ordenados do mais recente para o mais antigo
+        logs = db.query(AuditLog).filter(AuditLog.table_affected == "tasks_odyc").order_by(AuditLog.timestamp.desc()).all()
         
-    st.write("### 📝 O que mudou?")
-    
-    df_orig_grp = df_original.groupby(['Line identifier', 'Task Code', 'Activity Name']).agg({
-        'Planned start': 'min', 
-        'Planned finish': 'max', 
-        'Horas_Alocadas': 'sum',
-        'Resource Name': lambda x: ', '.join(sorted(set(x.dropna().astype(str))))
-    }).reset_index()
-    
-    df_sim_grp = df_simulado.groupby(['Line identifier', 'Task Code', 'Activity Name']).agg({
-        'Planned start': 'min', 
-        'Planned finish': 'max', 
-        'Horas_Alocadas': 'sum',
-        'Resource Name': lambda x: ', '.join(sorted(set(x.dropna().astype(str))))
-    }).reset_index()
-    
-    df_compare = pd.merge(df_orig_grp, df_sim_grp, on=['Line identifier', 'Task Code', 'Activity Name'], 
-                          how='outer', suffixes=('_Orig', '_Sim'))
-    
-    df_compare['Planned start_Orig'] = pd.to_datetime(df_compare['Planned start_Orig']).dt.date
-    df_compare['Planned finish_Orig'] = pd.to_datetime(df_compare['Planned finish_Orig']).dt.date
-    df_compare['Planned start_Sim'] = pd.to_datetime(df_compare['Planned start_Sim']).dt.date
-    df_compare['Planned finish_Sim'] = pd.to_datetime(df_compare['Planned finish_Sim']).dt.date
-    
-    df_compare['Resource Name_Orig'] = df_compare['Resource Name_Orig'].fillna('N/A')
-    df_compare['Resource Name_Sim'] = df_compare['Resource Name_Sim'].fillna('N/A')
-    df_compare['Horas_Alocadas_Orig'] = df_compare['Horas_Alocadas_Orig'].fillna(0)
-    df_compare['Horas_Alocadas_Sim'] = df_compare['Horas_Alocadas_Sim'].fillna(0)
-
-    mudancas = df_compare[
-        (df_compare['Planned start_Orig'] != df_compare['Planned start_Sim']) |
-        (df_compare['Planned finish_Orig'] != df_compare['Planned finish_Sim']) |
-        (round(df_compare['Horas_Alocadas_Orig'], 1) != round(df_compare['Horas_Alocadas_Sim'], 1)) |
-        (df_compare['Resource Name_Orig'] != df_compare['Resource Name_Sim'])
-    ].copy()
-    
-    if mudancas.empty:
-        st.success("Nenhuma alteração detectada em relação ao original.")
-    else:
-        mudancas['Início (De -> Para)'] = mudancas['Planned start_Orig'].fillna('N/A').astype(str) + " ➡️ " + mudancas['Planned start_Sim'].fillna('N/A').astype(str)
-        mudancas['Fim (De -> Para)'] = mudancas['Planned finish_Orig'].fillna('N/A').astype(str) + " ➡️ " + mudancas['Planned finish_Sim'].fillna('N/A').astype(str)
-        mudancas['Horas (De -> Para)'] = mudancas['Horas_Alocadas_Orig'].round(1).astype(str) + "h ➡️ " + mudancas['Horas_Alocadas_Sim'].round(1).astype(str) + "h"
-        mudancas['Recursos (De -> Para)'] = mudancas['Resource Name_Orig'].astype(str) + " ➡️ " + mudancas['Resource Name_Sim'].astype(str)
-        
-        df_display = mudancas[['Line identifier', 'Task Code', 'Activity Name', 'Recursos (De -> Para)', 'Início (De -> Para)', 'Fim (De -> Para)', 'Horas (De -> Para)']].copy()
-        
-        df_display.insert(0, 'Reverter', False)
-        
-        st.write("Selecione as tarefas que deseja desfazer e clique no botão abaixo.")
-        
-        edited_mudancas = st.data_editor(
-            df_display, hide_index=True, use_container_width=True,
-            column_config={"Reverter": st.column_config.CheckboxColumn("Desfazer?", default=False)}
-        )
-        
-        col_btn1, col_btn2 = st.columns([2, 2])
-        with col_btn1:
-            if st.button("🔄 Reverter Tarefas Selecionadas"):
-                revert_mask = edited_mudancas['Reverter'] == True
-                if revert_mask.any():
-                    tasks_to_revert = edited_mudancas[revert_mask]
-                    df_novo = st.session_state['df_simulado'].copy()
-                    
-                    for _, row in tasks_to_revert.iterrows():
-                        l_id = row['Line identifier']
-                        t_code = row['Task Code']
-                        a_name = row['Activity Name']
-                        
-                        mask_sim = (df_novo['Line identifier'] == l_id) & (df_novo['Task Code'] == t_code) & (df_novo['Activity Name'] == a_name)
-                        df_novo = df_novo[~mask_sim]
-                        
-                        mask_orig = (df_original['Line identifier'] == l_id) & (df_original['Task Code'] == t_code) & (df_original['Activity Name'] == a_name)
-                        df_to_restore = df_original[mask_orig]
-                        
-                        if not df_to_restore.empty:
-                            df_novo = pd.concat([df_novo, df_to_restore], ignore_index=True)
-                            
-                    st.session_state['df_simulado'] = df_novo
-                    st.success("Alterações revertidas com sucesso!")
-                    st.rerun()
-                    
-        with col_btn2:
-            csv = df_display.drop(columns=['Reverter']).to_csv(index=False, sep=';', encoding='utf-8-sig')
-            st.download_button(label="📥 Exportar Relatório (CSV)", data=csv, file_name="relatorio_alteracoes.csv", mime="text/csv")
+        if not logs:
+            st.info("Nenhuma alteração registrada no banco de dados ainda.")
+        else:
+            # Converte os logs do banco para uma lista de dicionários para o Pandas
+            dados_log = []
+            for log in logs:
+                dados_log.append({
+                    "Data/Hora": log.timestamp.strftime("%d/%m/%Y %H:%M:%S"),
+                    "Usuário": log.user_id.title(),
+                    "Ação": "➕ Criação" if log.action == "CREATE" else "✏️ Edição" if log.action == "UPDATE" else "❌ Exclusão",
+                    "ID/Tarefa Afetada": log.record_id,
+                    "Campo Alterado": log.field_changed,
+                    "Valor Antigo": log.old_value,
+                    "Novo Valor": log.new_value
+                })
+            
+            df_logs = pd.DataFrame(dados_log)
+            
+            # Filtros rápidos para a tabela de logs
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                busca_user = st.selectbox("Filtrar por Usuário:", ["Todos"] + sorted(df_logs['Usuário'].unique().tolist()))
+            with col_f2:
+                busca_acao = st.selectbox("Filtrar por Ação:", ["Todas", "➕ Criação", "✏️ Edição", "❌ Exclusão"])
+                
+            if busca_user != "Todos":
+                df_logs = df_logs[df_logs['Usuário'] == busca_user]
+            if busca_acao != "Todas":
+                df_logs = df_logs[df_logs['Ação'] == busca_acao]
+            
+            st.dataframe(df_logs, use_container_width=True, hide_index=True)
+            
+            # Botão de exportação
+            csv = df_logs.to_csv(index=False, sep=';', encoding='utf-8-sig')
+            st.download_button(label="📥 Exportar Histórico Completo (CSV)", data=csv, file_name="historico_auditoria_odyc.csv", mime="text/csv")
+            
+    except Exception as e:
+        st.error(f"Erro ao carregar logs: {e}")
+    finally:
+        db.close()
             
     st.write("---")
     st.write("### 🚨 Alertas de Conflito (Predecessoras)")
     
+    if 'ignored_conflicts' not in st.session_state:
+        st.session_state['ignored_conflicts'] = []
+        
     df_tarefas = df_simulado.groupby(['Line identifier', 'Task Code', 'Activity Name']).agg({
         'Planned start': 'first', 'Planned finish': 'first', 'Predecessor': 'first'
     }).reset_index()

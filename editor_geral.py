@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import math
+from utils import registrar_log  # <-- NOVIDADE: Importando nosso espião de logs
 
 def clear_ui_state():
     # Limpa apenas os estados dos filtros internos e editores
@@ -13,6 +14,9 @@ def clear_ui_state():
 def render_editor_geral():
     st.subheader("✏️ Simulador de Cenários (Geral)")
     df_geral = st.session_state['df_geral']
+    
+    # Pega o nome do usuário logado para colocar no Log
+    usuario = st.session_state.get("usuario_logado", "Desconhecido") 
     
     todos_recursos = sorted(df_geral['Resource Name'].dropna().unique())
     
@@ -79,6 +83,18 @@ def render_editor_geral():
                     })
                     
                 st.session_state['df_geral'] = pd.concat([df_geral, pd.DataFrame(novas_linhas)], ignore_index=True)
+                
+                # --- REGISTRO DE LOG ---
+                registrar_log(
+                    user_id=usuario,
+                    action="CREATE",
+                    table_affected="tasks_geral",
+                    record_id=f"{novo_projeto} | {novo_activity}",
+                    field_changed="Nova Tarefa",
+                    old_value="",
+                    new_value=f"{novas_horas}h para {novo_rec}"
+                )
+                
                 st.success("Tarefa criada com sucesso! O aplicativo será recarregado...")
                 clear_ui_state()
                 st.rerun()
@@ -194,6 +210,18 @@ def render_editor_geral():
                             df_novo = pd.concat([df_novo, pd.DataFrame(novas_linhas)], ignore_index=True)
                             
                         st.session_state['df_geral'] = df_novo
+                        
+                        # --- REGISTRO DE LOG ---
+                        registrar_log(
+                            user_id=usuario,
+                            action="UPDATE",
+                            table_affected="tasks_geral",
+                            record_id=f"{p_name} | {a_name}",
+                            field_changed="Edição em Lote (Recursos/Horas)",
+                            old_value="Valores antigos",
+                            new_value="Novos valores de simulação"
+                        )
+                        
                         st.success("✅ Simulação salva!")
                         clear_ui_state()
                         st.rerun()
@@ -215,7 +243,9 @@ def render_editor_geral():
             
             if not df_visao.empty:
                 df_visao_show = df_visao[['Project Name', 'Activity Name', 'CostCenter Name', 'Resource Name', 'Planned start', 'Planned finish', 'Horas_Alocadas', 'RTC_ID']].copy()
-                df_visao_show = df_visao_show.sort_values('Horas_Alocadas', ascending=False)
+                
+                # CORREÇÃO: reset_index(drop=True) para evitar o erro "out-of-bounds"
+                df_visao_show = df_visao_show.sort_values('Horas_Alocadas', ascending=False).reset_index(drop=True)
                 
                 st.success(f"Total de horas alocadas: **{df_visao_show['Horas_Alocadas'].sum():.1f}h**")
                 
@@ -241,6 +271,7 @@ def render_editor_geral():
                     
                     if st.form_submit_button("💾 Salvar Alterações do Mês"):
                         df_novo = st.session_state['df_geral'].copy()
+                        mudancas_feitas = 0
                         
                         for idx, row in df_editado_visao.iterrows():
                             p_name = row['Project Name']
@@ -250,6 +281,26 @@ def render_editor_geral():
                             novo_fim = row['Planned finish']
                             novas_horas = row['Horas_Alocadas']
                             novo_rtc = row['RTC_ID']
+                            
+                            # Verifica se houve mudança para logar
+                            linha_antiga = df_visao_show.iloc[idx]
+                            if (linha_antiga['Resource Name'] != novo_rec or 
+                                linha_antiga['Horas_Alocadas'] != novas_horas or
+                                linha_antiga['Planned start'] != novo_inicio or
+                                linha_antiga['Planned finish'] != novo_fim or
+                                linha_antiga['RTC_ID'] != novo_rtc):
+                                
+                                mudancas_feitas += 1
+                                # --- REGISTRO DE LOG ---
+                                registrar_log(
+                                    user_id=usuario,
+                                    action="UPDATE",
+                                    table_affected="tasks_geral",
+                                    record_id=f"{p_name} | {a_name}",
+                                    field_changed="Visão Mensal",
+                                    old_value=f"{linha_antiga['Horas_Alocadas']}h",
+                                    new_value=f"{novas_horas}h"
+                                )
                             
                             mask_linha = (df_novo['Project Name'] == p_name) & \
                                          (df_novo['Activity Name'] == a_name) & \
@@ -270,7 +321,7 @@ def render_editor_geral():
                             df_novo.loc[mask_tarefa, 'RTC_ID'] = novo_rtc
                             
                         st.session_state['df_geral'] = df_novo
-                        st.success("✅ Alterações salvas com sucesso!")
+                        st.success(f"✅ {mudancas_feitas} alterações salvas com sucesso!")
                         clear_ui_state()
                         st.rerun()
             else:
@@ -344,6 +395,18 @@ def render_editor_geral():
                             df_novo = pd.concat([df_novo, pd.DataFrame(novas_linhas)], ignore_index=True)
                             
                         st.session_state['df_geral'] = df_novo
+                        
+                        # --- REGISTRO DE LOG ---
+                        registrar_log(
+                            user_id=usuario,
+                            action="UPDATE",
+                            table_affected="tasks_geral",
+                            record_id=f"{p_name} | {a_name}",
+                            field_changed="Distribuição Manual",
+                            old_value=f"{df_meses_edit['Horas_Alocadas'].sum():.1f}h",
+                            new_value=f"{df_meses_editado['Horas_Alocadas'].sum():.1f}h"
+                        )
+                        
                         st.success("✅ Distribuição salva com sucesso!")
                         clear_ui_state()
                         st.rerun()

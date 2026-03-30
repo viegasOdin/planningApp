@@ -2,6 +2,7 @@ import streamlit as st
 import plotly.express as px
 import pandas as pd
 import numpy as np
+from database import SessionLocal, AuditLog  # <-- NOVIDADE: Importando o banco de dados
 
 def render_dashboard_geral(df_master):
     st.subheader("📈 Visão Geral de Horas (Workload Geral)")
@@ -18,11 +19,9 @@ def render_dashboard_geral(df_master):
     col_f1, col_f2 = st.columns(2)
     with col_f1:
         projetos_disponiveis = sorted(df_valid['Project Name'].unique())
-        # CORREÇÃO: Adicionado key="dash_proj_filter"
         projetos_selecionados = st.multiselect("📁 Filtrar por Projeto(s):", options=projetos_disponiveis, default=[], key="dash_proj_filter")
     with col_f2:
         cc_disponiveis = sorted(df_valid['CostCenter Name'].unique())
-        # CORREÇÃO: Adicionado key="dash_cc_filter"
         cc_selecionados = st.multiselect("🏢 Filtrar por CostCenter Name:", options=cc_disponiveis, default=[], key="dash_cc_filter")
     
     if projetos_selecionados:
@@ -129,10 +128,8 @@ def render_heatmap_geral(df_master, df_capacidade):
     with st.form(key='form_filtros_heatmap_geral'):
         col1, col2 = st.columns(2)
         with col1:
-            # CORREÇÃO: Adicionado key="heat_rec_filter_geral"
             recursos_selecionados = st.multiselect("👥 Selecione os Recursos:", options=recursos_disponiveis, default=[], key="heat_rec_filter_geral")
         with col2:
-            # CORREÇÃO: Adicionado key="heat_date_filter_geral"
             periodo_selecionado = st.date_input("📅 Período (Mês):", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="heat_date_filter_geral")
         submit_button = st.form_submit_button(label='🚀 Aplicar Filtros')
         
@@ -239,109 +236,52 @@ def render_heatmap_geral(df_master, df_capacidade):
             st.info("Nenhuma hora alocada para este recurso neste mês.")
 
 def render_changelog_geral(df_original, df_simulado):
-    st.subheader("⚠️ Resumo de Alterações (Workload Geral)")
-    st.write("Audite as mudanças, reverta cenários e exporte o relatório.")
+    st.subheader("🕵️‍♂️ Histórico de Auditoria (Logs - Geral)")
+    st.write("Acompanhe todas as alterações feitas no sistema, quem fez e quando.")
     
-    projetos_disp = sorted(df_simulado['Project Name'].dropna().unique())
-    projetos_filtro = st.multiselect("📁 Filtrar por Projeto(s):", options=projetos_disp, default=[], key="change_proj_filter_geral")
-    
-    df_orig_view = df_original.copy()
-    df_sim_view = df_simulado.copy()
-    
-    if projetos_filtro:
-        df_orig_view = df_orig_view[df_orig_view['Project Name'].isin(projetos_filtro)]
-        df_sim_view = df_sim_view[df_sim_view['Project Name'].isin(projetos_filtro)]
+    # --- NOVIDADE: BUSCA DIRETO DO BANCO DE DADOS ---
+    db = SessionLocal()
+    try:
+        # Busca os logs da tabela Geral, ordenados do mais recente para o mais antigo
+        logs = db.query(AuditLog).filter(AuditLog.table_affected == "tasks_geral").order_by(AuditLog.timestamp.desc()).all()
         
-    df_orig_view['Planned start'] = pd.to_datetime(df_orig_view['Planned start'], errors='coerce')
-    df_orig_view['Planned finish'] = pd.to_datetime(df_orig_view['Planned finish'], errors='coerce')
-    df_sim_view['Planned start'] = pd.to_datetime(df_sim_view['Planned start'], errors='coerce')
-    df_sim_view['Planned finish'] = pd.to_datetime(df_sim_view['Planned finish'], errors='coerce')
-        
-    # NOVIDADE: Agrupando também por 'Mes' para ter a visão granular
-    df_orig_grp = df_orig_view.groupby(['Project Name', 'Activity Name', 'Mes']).agg({
-        'Planned start': 'min', 
-        'Planned finish': 'max', 
-        'Horas_Alocadas': 'sum',
-        'Resource Name': lambda x: ', '.join(sorted(set(x.dropna().astype(str))))
-    }).reset_index()
-    
-    df_sim_grp = df_sim_view.groupby(['Project Name', 'Activity Name', 'Mes']).agg({
-        'Planned start': 'min', 
-        'Planned finish': 'max', 
-        'Horas_Alocadas': 'sum',
-        'Resource Name': lambda x: ', '.join(sorted(set(x.dropna().astype(str))))
-    }).reset_index()
-    
-    # O merge agora cruza Projeto, Atividade E Mês
-    df_compare = pd.merge(df_orig_grp, df_sim_grp, on=['Project Name', 'Activity Name', 'Mes'], 
-                          how='outer', suffixes=('_Orig', '_Sim'))
-    
-    df_compare['Planned start_Orig_str'] = pd.to_datetime(df_compare['Planned start_Orig']).dt.date.fillna('N/A').astype(str)
-    df_compare['Planned finish_Orig_str'] = pd.to_datetime(df_compare['Planned finish_Orig']).dt.date.fillna('N/A').astype(str)
-    df_compare['Planned start_Sim_str'] = pd.to_datetime(df_compare['Planned start_Sim']).dt.date.fillna('N/A').astype(str)
-    df_compare['Planned finish_Sim_str'] = pd.to_datetime(df_compare['Planned finish_Sim']).dt.date.fillna('N/A').astype(str)
-    
-    df_compare['Resource Name_Orig'] = df_compare['Resource Name_Orig'].fillna('N/A')
-    df_compare['Resource Name_Sim'] = df_compare['Resource Name_Sim'].fillna('N/A')
-    df_compare['Horas_Alocadas_Orig'] = df_compare['Horas_Alocadas_Orig'].fillna(0)
-    df_compare['Horas_Alocadas_Sim'] = df_compare['Horas_Alocadas_Sim'].fillna(0)
-
-    mudancas = df_compare[
-        (df_compare['Planned start_Orig_str'] != df_compare['Planned start_Sim_str']) |
-        (df_compare['Planned finish_Orig_str'] != df_compare['Planned finish_Sim_str']) |
-        (round(df_compare['Horas_Alocadas_Orig'], 1) != round(df_compare['Horas_Alocadas_Sim'], 1)) |
-        (df_compare['Resource Name_Orig'] != df_compare['Resource Name_Sim'])
-    ].copy()
-    
-    if mudancas.empty:
-        st.success("Nenhuma alteração detectada em relação ao original.")
-    else:
-        mudancas['Início (De -> Para)'] = mudancas['Planned start_Orig_str'] + " ➡️ " + mudancas['Planned start_Sim_str']
-        mudancas['Fim (De -> Para)'] = mudancas['Planned finish_Orig_str'] + " ➡️ " + mudancas['Planned finish_Sim_str']
-        mudancas['Horas (De -> Para)'] = mudancas['Horas_Alocadas_Orig'].round(1).astype(str) + "h ➡️ " + mudancas['Horas_Alocadas_Sim'].round(1).astype(str) + "h"
-        mudancas['Recursos (De -> Para)'] = mudancas['Resource Name_Orig'].astype(str) + " ➡️ " + mudancas['Resource Name_Sim'].astype(str)
-        
-        # Adicionamos a coluna 'Mes' na exibição final
-        df_display = mudancas[['Project Name', 'Activity Name', 'Mes', 'Recursos (De -> Para)', 'Início (De -> Para)', 'Fim (De -> Para)', 'Horas (De -> Para)']].copy()
-        
-        df_display.insert(0, 'Reverter', False)
-        
-        st.write("Selecione as tarefas que deseja desfazer e clique no botão abaixo.")
-        
-        edited_mudancas = st.data_editor(
-            df_display, hide_index=True, use_container_width=True,
-            column_config={"Reverter": st.column_config.CheckboxColumn("Desfazer?", default=False)},
-            key="editor_changelog_geral"
-        )
-        
-        col_btn1, col_btn2 = st.columns([2, 2])
-        with col_btn1:
-            if st.button("🔄 Reverter Tarefas Selecionadas", key="btn_revert_geral"):
-                revert_mask = edited_mudancas['Reverter'] == True
-                if revert_mask.any():
-                    tasks_to_revert = edited_mudancas[revert_mask]
-                    df_novo = st.session_state['df_geral'].copy()
-                    
-                    for _, row in tasks_to_revert.iterrows():
-                        p_name = row['Project Name']
-                        a_name = row['Activity Name']
-                        mes_reverter = row['Mes'] # Pega o mês específico
-                        
-                        # Remove apenas o mês específico do simulado
-                        mask_sim = (df_novo['Project Name'] == p_name) & (df_novo['Activity Name'] == a_name) & (df_novo['Mes'] == mes_reverter)
-                        df_novo = df_novo[~mask_sim]
-                        
-                        # Restaura apenas o mês específico do original
-                        mask_orig = (df_original['Project Name'] == p_name) & (df_original['Activity Name'] == a_name) & (df_original['Mes'] == mes_reverter)
-                        df_to_restore = df_original[mask_orig]
-                        
-                        if not df_to_restore.empty:
-                            df_novo = pd.concat([df_novo, df_to_restore], ignore_index=True)
-                            
-                    st.session_state['df_geral'] = df_novo
-                    st.success("Alterações revertidas com sucesso!")
-                    st.rerun()
-                    
-        with col_btn2:
-            csv = df_display.drop(columns=['Reverter']).to_csv(index=False, sep=';', encoding='utf-8-sig')
-            st.download_button(label="📥 Exportar Relatório (CSV)", data=csv, file_name="relatorio_alteracoes_geral.csv", mime="text/csv", key="btn_export_geral")
+        if not logs:
+            st.info("Nenhuma alteração registrada no banco de dados ainda.")
+        else:
+            # Converte os logs do banco para uma lista de dicionários para o Pandas
+            dados_log = []
+            for log in logs:
+                dados_log.append({
+                    "Data/Hora": log.timestamp.strftime("%d/%m/%Y %H:%M:%S"),
+                    "Usuário": log.user_id.title(),
+                    "Ação": "➕ Criação" if log.action == "CREATE" else "✏️ Edição" if log.action == "UPDATE" else "❌ Exclusão",
+                    "Projeto | Atividade": log.record_id,
+                    "Campo Alterado": log.field_changed,
+                    "Valor Antigo": log.old_value,
+                    "Novo Valor": log.new_value
+                })
+            
+            df_logs = pd.DataFrame(dados_log)
+            
+            # Filtros rápidos para a tabela de logs
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                busca_user = st.selectbox("Filtrar por Usuário:", ["Todos"] + sorted(df_logs['Usuário'].unique().tolist()), key="log_user_geral")
+            with col_f2:
+                busca_acao = st.selectbox("Filtrar por Ação:", ["Todas", "➕ Criação", "✏️ Edição", "❌ Exclusão"], key="log_acao_geral")
+                
+            if busca_user != "Todos":
+                df_logs = df_logs[df_logs['Usuário'] == busca_user]
+            if busca_acao != "Todas":
+                df_logs = df_logs[df_logs['Ação'] == busca_acao]
+            
+            st.dataframe(df_logs, use_container_width=True, hide_index=True)
+            
+            # Botão de exportação
+            csv = df_logs.to_csv(index=False, sep=';', encoding='utf-8-sig')
+            st.download_button(label="📥 Exportar Histórico Completo (CSV)", data=csv, file_name="historico_auditoria_geral.csv", mime="text/csv", key="export_log_geral")
+            
+    except Exception as e:
+        st.error(f"Erro ao carregar logs: {e}")
+    finally:
+        db.close()
