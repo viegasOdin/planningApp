@@ -5,17 +5,17 @@ import pickle
 
 # Importações Módulo OdyC (SCADA)
 from data_processing import load_and_process_data, salvar_cenario_odyc_no_banco
-from datetime import datetime # Vamos precisar disso para gerar nomes de versões
+from datetime import datetime
 from visualizations import render_gantt, render_heatmap, render_dashboard, render_changelog
 from editor import render_editor
 from editor_matricial import render_editor_matricial
+from comparator import render_comparator
 
 # Importações Módulo Geral (Workload)
 from data_processing_geral import load_and_process_geral, salvar_cenario_geral_no_banco
 from visualizations_geral import render_dashboard_geral, render_gantt_geral, render_heatmap_geral, render_changelog_geral
 from editor_geral import render_editor_geral
 from editor_matricial_geral import render_editor_matricial_geral
-# from comparator_geral import render_comparator_geral
 
 st.set_page_config(page_title="Gerenciador de Projetos", layout="wide")
 
@@ -84,7 +84,6 @@ modo = st.sidebar.radio("Selecione o tipo de projeto:", ["OdyC", "Workload Geral
 st.sidebar.markdown("---")
 
 if st.sidebar.button("🔄 Atualizar Visão / Limpar Filtros"):
-    # Limpa apenas os filtros e editores, preservando uploaders e dados
     prefixos = ['mat_', 'editor_', 'visao_', 'busca_', 'sel_', 'task_', 'proj_', 'radio_grupo', 'multi_rec']
     for key in list(st.session_state.keys()):
         if any(key.startswith(p) for p in prefixos):
@@ -107,17 +106,16 @@ if modo == "OdyC":
     arquivo_schedule = st.sidebar.file_uploader("2. Upload Schedule (.xlsx, .xlsm)", type=["xlsx", "xlsm"])
 
     if st.sidebar.button("🔄 Iniciar do Zero (Limpar Tudo)"):
-        keys_to_keep = ['logado', 'seletor_modo_global']
+        keys_to_keep = ['logado', 'seletor_modo_global', 'usuario_logado']
         for key in list(st.session_state.keys()):
             if key not in keys_to_keep:
                 del st.session_state[key]
         st.rerun()
 
     st.sidebar.markdown("---")
-    st.sidebar.header("💾 Salvar / Carregar Projeto")
+    st.sidebar.header("📂 Carregar Projeto")
 
-    # --- NOVIDADE: UPLOAD DE ARQUIVO PKL EXTERNO ---
-    arquivo_pkl_externo = st.sidebar.file_uploader("📂 Importar Projeto Externo (.pkl)", type=["pkl"], key="pkl_odyc")
+    arquivo_pkl_externo = st.sidebar.file_uploader("Importar Projeto Externo (.pkl)", type=["pkl"], key="pkl_odyc")
     if arquivo_pkl_externo is not None:
         if st.sidebar.button("📥 Carregar Arquivo Importado"):
             try:
@@ -131,7 +129,6 @@ if modo == "OdyC":
             except Exception as e:
                 st.sidebar.error(f"Erro ao carregar arquivo: {e}")
 
-    # Carregar arquivo local (se existir)
     if os.path.exists(ARQUIVO_PERSISTENCIA):
         if st.sidebar.button("📂 Carregar Projeto Local"):
             with open(ARQUIVO_PERSISTENCIA, 'rb') as f:
@@ -143,7 +140,10 @@ if modo == "OdyC":
             st.sidebar.success("Projeto local carregado com sucesso!")
             st.rerun()
 
-    if st.sidebar.button("💾 Salvar Projeto Atual"):
+    st.sidebar.markdown("---")
+    st.sidebar.header("💾 Salvar Versão")
+    
+    if st.sidebar.button("💾 Salvar Projeto Atual (Local .pkl)"):
         if 'df_simulado' in st.session_state:
             with open(ARQUIVO_PERSISTENCIA, 'wb') as f:
                 pickle.dump({
@@ -155,6 +155,22 @@ if modo == "OdyC":
             st.sidebar.success(f"Projeto salvo localmente em: {BASE_DIR}")
         else:
             st.sidebar.warning("Nenhum dado para salvar.")
+            
+    # --- NOVIDADE: FORMULÁRIO PARA NOMEAR A VERSÃO NO BANCO (ODYC) ---
+    with st.sidebar.form("form_save_odyc"):
+        st.write("Salvar no Banco de Dados (Comparador)")
+        data_hora_atual = datetime.now().strftime('%d/%m/%Y %H:%M')
+        nome_versao = st.text_input("Nome da Versão:", value=f"Versão OdyC {data_hora_atual}")
+        submit_save = st.form_submit_button("Salvar Nova Versão", use_container_width=True)
+        
+        if submit_save:
+            if 'df_simulado' in st.session_state:
+                autor = st.session_state.get("usuario_logado", "Sistema")
+                novo_id = salvar_cenario_odyc_no_banco(st.session_state['df_simulado'], nome_cenario=nome_versao, autor=autor)
+                st.session_state['cenario_odyc_id'] = novo_id
+                st.success(f"Nova versão '{nome_versao}' salva no Banco de Dados! (ID: {novo_id})")
+            else:
+                st.warning("Nenhum dado para salvar.")
 
     tem_arquivos = arquivo_wkl is not None and arquivo_schedule is not None
     tem_dados_memoria = 'df_simulado' in st.session_state
@@ -165,11 +181,9 @@ if modo == "OdyC":
                 if tem_arquivos and 'df_original' not in st.session_state:
                     df_master, df_capacidade = load_and_process_data(arquivo_wkl, arquivo_schedule)
 
-                    # --- NOVIDADE: SALVA NO BANCO DE DADOS ---
                     autor = st.session_state.get("usuario_logado", "Sistema")
                     cenario_id = salvar_cenario_odyc_no_banco(df_master, nome_cenario="Carga Inicial Excel", autor=autor)
-                    st.session_state['cenario_odyc_id'] = cenario_id # Guarda o ID atual
-                    # -----------------------------------------
+                    st.session_state['cenario_odyc_id'] = cenario_id 
 
                     st.session_state['df_original'] = df_master.copy()
                     st.session_state['df_simulado'] = df_master.copy()
@@ -195,8 +209,8 @@ if modo == "OdyC":
                 
                 df_simulado_view = df_simulado[df_simulado['Resource Name'].isin(recursos_filtro)].copy() if recursos_filtro else df_simulado.copy()
 
-                aba_dash, aba_gantt, aba_heatmap, aba_simulador, aba_matricial, aba_changelog = st.tabs([
-                    "📈 Dashboard Geral", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "⚠️ Resumo de Alterações"
+                aba_dash, aba_gantt, aba_heatmap, aba_simulador, aba_matricial, aba_changelog, aba_comparador = st.tabs([
+                    "📈 Dashboard Geral", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🕵️ Histórico", "⚖️ Comparar Versões"
                 ])
                 
                 with aba_dash: render_dashboard(df_simulado_view)
@@ -205,6 +219,7 @@ if modo == "OdyC":
                 with aba_simulador: render_editor()
                 with aba_matricial: render_editor_matricial()
                 with aba_changelog: render_changelog(df_original, df_simulado)
+                with aba_comparador: render_comparator("OdyC")
                     
             except Exception as e:
                 st.error(f"Erro no processamento OdyC: {e}")
@@ -213,23 +228,21 @@ if modo == "OdyC":
 
 elif modo == "Workload Geral":
     ARQUIVO_PERSISTENCIA_GERAL = os.path.join(BASE_DIR, "geral_projeto.pkl")
-    ARQUIVO_BASELINE_GERAL = os.path.join(BASE_DIR, "baseline_geral.pkl")
     
     st.sidebar.header("📥 Importação de Dados (Geral)")
     arquivo_geral = st.sidebar.file_uploader("Upload Planilha Workload (.xlsx, .xlsm)", type=["xlsx", "xlsm"])
     
     if st.sidebar.button("🔄 Iniciar do Zero (Limpar Tudo)"):
-        keys_to_keep = ['logado', 'seletor_modo_global']
+        keys_to_keep = ['logado', 'seletor_modo_global', 'usuario_logado']
         for key in list(st.session_state.keys()):
             if key not in keys_to_keep:
                 del st.session_state[key]
         st.rerun()
         
     st.sidebar.markdown("---")
-    st.sidebar.header("💾 Salvar / Carregar Projeto")
+    st.sidebar.header("📂 Carregar Projeto")
 
-    # --- NOVIDADE: UPLOAD DE ARQUIVO PKL EXTERNO (GERAL) ---
-    arquivo_pkl_geral = st.sidebar.file_uploader("📂 Importar Projeto Externo (.pkl)", type=["pkl"], key="pkl_geral")
+    arquivo_pkl_geral = st.sidebar.file_uploader("Importar Projeto Externo (.pkl)", type=["pkl"], key="pkl_geral")
     if arquivo_pkl_geral is not None:
         if st.sidebar.button("📥 Carregar Arquivo Importado"):
             try:
@@ -252,40 +265,27 @@ elif modo == "Workload Geral":
             st.sidebar.success("Projeto Geral local carregado com sucesso!")
             st.rerun()
 
-    if st.sidebar.button("💾 Salvar Nova Versão no Banco"):
-        if 'df_geral' in st.session_state:
-            autor = st.session_state.get("usuario_logado", "Sistema")
-            data_hora = datetime.now().strftime('%d/%m/%Y %H:%M')
-            
-            novo_id = salvar_cenario_geral_no_banco(st.session_state['df_geral'], nome_cenario=f"Versão Geral {data_hora}", autor=autor)
-            
-            st.session_state['cenario_geral_id'] = novo_id
-            st.sidebar.success(f"Nova versão salva no Banco de Dados! (ID: {novo_id})")
-        else:
-            st.sidebar.warning("Nenhum dado para salvar.")
-            
     st.sidebar.markdown("---")
-    st.sidebar.header("📸 Gestão de Baseline")
-    st.sidebar.write("Tire uma 'foto' do mês para comparar com o próximo arquivo.")
-    
-    if os.path.exists(ARQUIVO_BASELINE_GERAL):
-        if st.sidebar.button("📂 Carregar Baseline Anterior"):
-            with open(ARQUIVO_BASELINE_GERAL, 'rb') as f:
-                st.session_state['df_baseline_geral'] = pickle.load(f)
-            st.sidebar.success("Baseline carregada com sucesso!")
-            st.rerun()
-            
-    if 'df_geral' in st.session_state:
-        if st.sidebar.button("📸 Salvar Atual como Baseline"):
-            with open(ARQUIVO_BASELINE_GERAL, 'wb') as f:
-                pickle.dump(st.session_state['df_geral'], f)
-            st.session_state['df_baseline_geral'] = st.session_state['df_geral'].copy()
-            st.sidebar.success(f"Baseline salva em: {BASE_DIR}")
-            st.rerun()
+    st.sidebar.header("💾 Salvar Versão")
+
+    # --- NOVIDADE: FORMULÁRIO PARA NOMEAR A VERSÃO NO BANCO (GERAL) ---
+    with st.sidebar.form("form_save_geral"):
+        st.write("Salvar no Banco de Dados (Comparador)")
+        data_hora_atual = datetime.now().strftime('%d/%m/%Y %H:%M')
+        nome_versao = st.text_input("Nome da Versão:", value=f"Versão Geral {data_hora_atual}")
+        submit_save = st.form_submit_button("Salvar Nova Versão", use_container_width=True)
+        
+        if submit_save:
+            if 'df_geral' in st.session_state:
+                autor = st.session_state.get("usuario_logado", "Sistema")
+                novo_id = salvar_cenario_geral_no_banco(st.session_state['df_geral'], nome_cenario=nome_versao, autor=autor)
+                st.session_state['cenario_geral_id'] = novo_id
+                st.success(f"Nova versão '{nome_versao}' salva no Banco de Dados! (ID: {novo_id})")
+            else:
+                st.warning("Nenhum dado para salvar.")
             
     tem_arquivos_geral = arquivo_geral is not None
     tem_dados_memoria_geral = 'df_geral' in st.session_state
-    tem_baseline = 'df_baseline_geral' in st.session_state
 
     if tem_arquivos_geral or tem_dados_memoria_geral:
         with st.spinner('Processando dados gerais...'):
@@ -318,10 +318,7 @@ elif modo == "Workload Geral":
                 
                 df_geral_view = df_geral[df_geral['Resource Name'].isin(recursos_filtro)].copy() if recursos_filtro else df_geral.copy()
                 
-                abas_titulos = ["📈 Dashboard", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "⚠️ Resumo de Alterações"]
-                if tem_baseline:
-                    abas_titulos.append("⚖️ Comparativo")
-                    
+                abas_titulos = ["📈 Dashboard", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🕵️ Histórico", "⚖️ Comparar Versões"]
                 abas = st.tabs(abas_titulos)
                 
                 with abas[0]: render_dashboard_geral(df_geral_view)
@@ -330,13 +327,7 @@ elif modo == "Workload Geral":
                 with abas[3]: render_editor_geral()
                 with abas[4]: render_editor_matricial_geral()
                 with abas[5]: render_changelog_geral(st.session_state['df_original_geral'], df_geral)
-                
-                if tem_baseline:
-                    with abas[6]: 
-                        df_base_view = st.session_state['df_baseline_geral']
-                        if recursos_filtro:
-                            df_base_view = df_base_view[df_base_view['Resource Name'].isin(recursos_filtro)].copy()
-                        # render_comparator_geral(df_base_view, df_geral_view)
+                with abas[6]: render_comparator("Workload Geral")
                     
             except Exception as e:
                 st.error(f"Erro ao processar a planilha Geral: {e}")
