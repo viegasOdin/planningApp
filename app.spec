@@ -5,13 +5,14 @@
 #
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 # ------------------------------------------------------------
 # Coleta todos os arquivos de dados/estáticos do Streamlit
 # (CSS, JS, imagens, metadados de componentes, etc.)
 # ------------------------------------------------------------
 datas = []
+datas += copy_metadata("streamlit")
 datas += collect_data_files("streamlit")
 datas += collect_data_files("altair")
 datas += collect_data_files("plotly")
