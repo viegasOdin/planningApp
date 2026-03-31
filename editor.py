@@ -1,33 +1,32 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
 import math
-from utils import registrar_log
-
-def extract_ids(dependency_string):
-    if pd.isna(dependency_string) or str(dependency_string).strip() == '': 
-        return []
-    parts = str(dependency_string).split(';')
-    ids = []
-    for p in parts:
-        match = re.match(r'^[\d\.]+', str(p).strip())
-        if match: 
-            ids.append(match.group())
-    return ids
+from utils import registrar_log, extract_ids, aplicar_cascata
 
 def clear_ui_state():
-    # Limpa apenas os estados dos filtros internos e editores
     prefixos = ['mat_', 'editor_', 'visao_', 'busca_', 'sel_', 'task_', 'proj_']
     for key in list(st.session_state.keys()):
         if any(key.startswith(p) for p in prefixos):
             del st.session_state[key]
 
+def get_bdays_delta(date_old, date_new):
+    """Calcula a diferença em dias úteis entre duas datas (positivo se atrasou, negativo se adiantou)"""
+    d_old = pd.to_datetime(date_old)
+    d_new = pd.to_datetime(date_new)
+    if d_new >= d_old:
+        return len(pd.bdate_range(d_old, d_new)) - 1
+    else:
+        return -(len(pd.bdate_range(d_new, d_old)) - 1)
+
 def render_editor():
     st.subheader("✏️ Simulador de Cenários Avançado")
-    df_simulado = st.session_state['df_simulado']
     
-    # Pega o nome do usuário logado para colocar no Log
+    if 'msg_cascata' in st.session_state:
+        st.success(st.session_state['msg_cascata'])
+        del st.session_state['msg_cascata']
+        
+    df_simulado = st.session_state['df_simulado']
     usuario = st.session_state.get("usuario_logado", "Desconhecido") 
     
     if 'Line identifier' not in df_simulado.columns:
@@ -42,7 +41,6 @@ def render_editor():
         st.write("Adicione uma nova atividade vinculada a um recurso e pacote existente.")
         with st.form("form_nova_tarefa"):
             col_n1, col_n2 = st.columns(2)
-            
             novo_rec = col_n1.selectbox("1️⃣ Recurso:", todos_recursos)
             
             task_codes_recurso = df_simulado[df_simulado['Resource Name'] == novo_rec]['Task Code'].dropna().unique()
@@ -98,18 +96,7 @@ def render_editor():
                     })
                     
                 st.session_state['df_simulado'] = pd.concat([df_simulado, pd.DataFrame(novas_linhas)], ignore_index=True)
-                
-                # --- REGISTRO DE LOG ---
-                registrar_log(
-                    user_id=usuario,
-                    action="CREATE",
-                    table_affected="tasks_odyc",
-                    record_id=novo_id_linha,
-                    field_changed="Nova Tarefa",
-                    old_value="",
-                    new_value=f"{novas_horas}h para {novo_rec}"
-                )
-                
+                registrar_log(usuario, "CREATE", "tasks_odyc", novo_id_linha, "Nova Tarefa", "", f"{novas_horas}h para {novo_rec}")
                 st.success("Tarefa criada com sucesso! O aplicativo será recarregado...")
                 clear_ui_state()
                 st.rerun()
@@ -117,10 +104,8 @@ def render_editor():
     with tab_editar:
         st.info("💡 **Dica para Dividir Tarefas:** Para alocar mais de um recurso na mesma tarefa, basta adicionar uma nova linha na tabela abaixo, escolher o novo recurso e definir as horas dele!")
         col_busca1, col_busca2, col_busca3 = st.columns(3)
-        with col_busca1:
-            busca_nome = st.text_input("🔍 Buscar por Nome da Tarefa:", "")
-        with col_busca2:
-            busca_id = st.text_input("🔍 Buscar por Line ID:", "")
+        with col_busca1: busca_nome = st.text_input("🔍 Buscar por Nome da Tarefa:", "")
+        with col_busca2: busca_id = st.text_input("🔍 Buscar por Line ID:", "")
         with col_busca3:
             task_codes_list = [""] + sorted(df_simulado['Task Code'].dropna().unique().tolist())
             busca_task = st.selectbox("📁 Filtrar por Task Code:", task_codes_list)
@@ -154,7 +139,6 @@ def render_editor():
             
             pred_ids = extract_ids(linha_atual['Predecessor'])
             succ_ids = extract_ids(linha_atual['Successor'])
-            
             todos_ids_contexto = [id for id in [current_id] + pred_ids + succ_ids if id != 'N/A' and id != 'nan']
             
             st.write("---")
@@ -171,12 +155,9 @@ def render_editor():
             
             def tipo_relacao(row):
                 row_id = str(row['Line identifier'])
-                if row['Task Code'] == task_code and row['Activity Name'] == activity_name:
-                    return "🎯 Principal"
-                elif row_id in pred_ids:
-                    return "⬅️ Antecessora"
-                elif row_id in succ_ids:
-                    return "➡️ Sucessora"
+                if row['Task Code'] == task_code and row['Activity Name'] == activity_name: return "🎯 Principal"
+                elif row_id in pred_ids: return "⬅️ Antecessora"
+                elif row_id in succ_ids: return "➡️ Sucessora"
                 return "Outro"
                 
             df_contexto['Relação'] = df_contexto.apply(tipo_relacao, axis=1)
@@ -199,22 +180,23 @@ def render_editor():
             opcoes_edicao = df_contexto['Task Code'] + " | " + df_contexto['Activity Name']
             idx_principal = next((i for i, val in enumerate(opcoes_edicao) if val == tarefa_selecionada), 0)
                     
-            tarefa_para_editar = st.selectbox(
-                "2️⃣ Qual destas atividades do contexto você deseja editar?", 
-                opcoes_edicao.tolist(),
-                index=idx_principal
-            )
+            tarefa_para_editar = st.selectbox("2️⃣ Qual destas atividades do contexto você deseja editar?", opcoes_edicao.tolist(), index=idx_principal)
             
             if tarefa_para_editar:
                 edit_task_code, edit_activity_name = tarefa_para_editar.split(" | ")
                 
                 df_alocacoes = df_simulado[(df_simulado['Task Code'] == edit_task_code) & (df_simulado['Activity Name'] == edit_activity_name)]
+                edit_line_id = str(df_alocacoes['Line identifier'].iloc[0])
+                
                 df_edit = df_alocacoes.groupby('Resource Name').agg({
                     'Planned start': 'first', 'Planned finish': 'first', 'Horas_Alocadas': 'sum'
                 }).reset_index()
                 
                 with st.form("form_edicao_multipla"):
-                    st.write("💡 **Dica de Data Fim:** Se você deixar a **Data Fim vazia**, o sistema vai calcular automaticamente os dias úteis necessários considerando **9,18h por dia**.")
+                    st.write("💡 **Dica de UX:** Se você alterar a **Data Início**, a Data Fim será recalculada automaticamente para manter as mesmas horas!")
+                    empurrar_sucessoras = st.checkbox("🔗 Empurrar tarefas sucessoras automaticamente (respeitando FS, SS, FF)", value=True)
+                    st.write("---")
+                    
                     config_colunas = {
                         "Resource Name": st.column_config.SelectboxColumn("Recurso", options=todos_recursos, required=True),
                         "Planned start": st.column_config.DateColumn("Data Início", required=True),
@@ -240,7 +222,12 @@ def render_editor():
                             info_estatica = df_alocacoes.iloc[0].copy()
                             novas_linhas = []
                             
-                            for _, row in df_editado.iterrows():
+                            old_min_start = pd.to_datetime(df_alocacoes['Planned start']).min().date()
+                            old_max_finish = pd.to_datetime(df_alocacoes['Planned finish']).max().date()
+                            
+                            for idx, row in df_editado.iterrows():
+                                orig_row = df_edit.iloc[idx] if idx < len(df_edit) else None
+                                
                                 rec = row['Resource Name']
                                 inicio = row['Planned start']
                                 horas = row['Horas_Alocadas']
@@ -248,7 +235,10 @@ def render_editor():
                                 
                                 if horas <= 0: continue 
                                 
-                                # Lógica de cálculo de Data Fim (9,18h/dia)
+                                if orig_row is not None:
+                                    if inicio != orig_row['Planned start'] and fim_manual == orig_row['Planned finish'] and horas == orig_row['Horas_Alocadas']:
+                                        fim_manual = None 
+                                
                                 if pd.isnull(fim_manual):
                                     dias_necessarios = math.ceil(horas / 9.18)
                                     fim_calculado = pd.to_datetime(inicio) + pd.offsets.BDay(max(1, dias_necessarios) - 1)
@@ -272,29 +262,27 @@ def render_editor():
                                     nova_linha['Planned start'] = inicio
                                     nova_linha['Planned finish'] = fim
                                     nova_linha['Resource Name'] = rec
-                                    if 'RTC_ID' in info_estatica:
-                                        nova_linha['RTC_ID'] = info_estatica['RTC_ID']
+                                    if 'RTC_ID' in info_estatica: nova_linha['RTC_ID'] = info_estatica['RTC_ID']
                                     novas_linhas.append(nova_linha)
                                     
                             if novas_linhas:
                                 df_novo = pd.concat([df_novo, pd.DataFrame(novas_linhas)], ignore_index=True)
                                 
-                            st.session_state['df_simulado'] = df_novo
-                            
-                            # --- REGISTRO DE LOG ---
-                            registrar_log(
-                                user_id=usuario,
-                                action="UPDATE",
-                                table_affected="tasks_odyc",
-                                record_id=edit_task_code,
-                                field_changed="Edição em Lote (Recursos/Horas)",
-                                old_value="Valores antigos",
-                                new_value="Novos valores de simulação"
-                            )
-                            
-                            st.success("✅ Simulação salva!")
-                            clear_ui_state()
-                            st.rerun()
+                                new_min_start = min([pd.to_datetime(r['Planned start']).date() for r in novas_linhas])
+                                new_max_finish = max([pd.to_datetime(r['Planned finish']).date() for r in novas_linhas])
+                                
+                                delta_start = get_bdays_delta(old_min_start, new_min_start)
+                                delta_finish = get_bdays_delta(old_max_finish, new_max_finish)
+                                
+                                if empurrar_sucessoras and (delta_start != 0 or delta_finish != 0):
+                                    df_novo, qtd_afetadas = aplicar_cascata(df_novo, edit_line_id, delta_start, delta_finish, usuario)
+                                    if qtd_afetadas > 0:
+                                        st.session_state['msg_cascata'] = f"🔄 Cascata: {qtd_afetadas} tarefas sucessoras foram ajustadas."
+                                
+                                st.session_state['df_simulado'] = df_novo
+                                registrar_log(usuario, "UPDATE", "tasks_odyc", edit_task_code, "Edição em Lote (Recursos/Horas)", "Valores antigos", "Novos valores de simulação")
+                                clear_ui_state()
+                                st.rerun()
 
     # --- ABA 3: VISAO POR RECURSO / MES ---
     with tab_visao:
@@ -302,8 +290,7 @@ def render_editor():
         st.write("Edite o **Recurso**, **Datas**, **Horas** ou **RTC ID** diretamente na tabela.")
         
         col_v1, col_v2 = st.columns(2)
-        with col_v1:
-            rec_visao = st.selectbox("👤 Selecione o Recurso:", [""] + todos_recursos, key="visao_rec_odyc")
+        with col_v1: rec_visao = st.selectbox("👤 Selecione o Recurso:", [""] + todos_recursos, key="visao_rec_odyc")
         with col_v2:
             meses_disp = sorted(df_simulado['Mes'].unique(), key=lambda x: pd.to_datetime(x, format='%m/%Y'))
             mes_visao = st.selectbox("📅 Selecione o Mês:", [""] + meses_disp, key="visao_mes_odyc")
@@ -313,13 +300,8 @@ def render_editor():
             df_visao = df_simulado[mask_visao]
             
             if not df_visao.empty:
-                if 'RTC_ID' not in df_visao.columns:
-                    df_visao['RTC_ID'] = ""
-                    
+                if 'RTC_ID' not in df_visao.columns: df_visao['RTC_ID'] = ""
                 df_visao_show = df_visao[['Line identifier', 'Task Code', 'Activity Name', 'Resource Name', 'Planned start', 'Planned finish', 'Horas_Alocadas', 'RTC_ID']].copy()
-                
-                # CORREÇÃO: reset_index(drop=True) zera o índice para 0, 1, 2...
-                # Isso evita o erro "single positional indexer is out-of-bounds"
                 df_visao_show = df_visao_show.sort_values('Horas_Alocadas', ascending=False).reset_index(drop=True)
                 
                 st.success(f"Total de horas alocadas: **{df_visao_show['Horas_Alocadas'].sum():.1f}h**")
@@ -336,19 +318,11 @@ def render_editor():
                         "RTC_ID": st.column_config.TextColumn("ID do RTC")
                     }
                     
-                    df_editado_visao = st.data_editor(
-                        df_visao_show,
-                        column_config=config_colunas_visao,
-                        use_container_width=True,
-                        hide_index=True,
-                        key="editor_visao_mes_odyc"
-                    )
+                    df_editado_visao = st.data_editor(df_visao_show, column_config=config_colunas_visao, use_container_width=True, hide_index=True, key="editor_visao_mes_odyc")
                     
                     if st.form_submit_button("💾 Salvar Alterações do Mês"):
                         df_novo = st.session_state['df_simulado'].copy()
-                        if 'RTC_ID' not in df_novo.columns:
-                            df_novo['RTC_ID'] = ""
-                        
+                        if 'RTC_ID' not in df_novo.columns: df_novo['RTC_ID'] = ""
                         mudancas_feitas = 0
                         
                         for idx, row in df_editado_visao.iterrows():
@@ -361,46 +335,22 @@ def render_editor():
                             novas_horas = row['Horas_Alocadas']
                             novo_rtc = row['RTC_ID']
                             
-                            # Verifica se houve mudança para logar
                             linha_antiga = df_visao_show.iloc[idx]
-                            if (linha_antiga['Resource Name'] != novo_rec or 
-                                linha_antiga['Horas_Alocadas'] != novas_horas or
-                                linha_antiga['Planned start'] != novo_inicio or
-                                linha_antiga['Planned finish'] != novo_fim or
-                                linha_antiga['RTC_ID'] != novo_rtc):
+                            if (linha_antiga['Resource Name'] != novo_rec or linha_antiga['Horas_Alocadas'] != novas_horas or
+                                linha_antiga['Planned start'] != novo_inicio or linha_antiga['Planned finish'] != novo_fim or linha_antiga['RTC_ID'] != novo_rtc):
                                 
                                 mudancas_feitas += 1
-                                # --- REGISTRO DE LOG ---
-                                registrar_log(
-                                    user_id=usuario,
-                                    action="UPDATE",
-                                    table_affected="tasks_odyc",
-                                    record_id=str(l_id),
-                                    field_changed="Visão Mensal",
-                                    old_value=f"{linha_antiga['Horas_Alocadas']}h",
-                                    new_value=f"{novas_horas}h"
-                                )
+                                registrar_log(usuario, "UPDATE", "tasks_odyc", str(l_id), "Visão Mensal", f"{linha_antiga['Horas_Alocadas']}h", f"{novas_horas}h")
                             
-                            mask_linha = (df_novo['Line identifier'] == l_id) & \
-                                         (df_novo['Task Code'] == t_code) & \
-                                         (df_novo['Activity Name'] == a_name) & \
-                                         (df_novo['Resource Name'] == rec_visao) & \
-                                         (df_novo['Mes'] == mes_visao)
-                            
+                            mask_linha = (df_novo['Line identifier'] == l_id) & (df_novo['Task Code'] == t_code) & (df_novo['Activity Name'] == a_name) & (df_novo['Resource Name'] == rec_visao) & (df_novo['Mes'] == mes_visao)
                             df_novo.loc[mask_linha, 'Resource Name'] = novo_rec
                             df_novo.loc[mask_linha, 'Horas_Alocadas'] = novas_horas
                             
-                            mask_tarefa_rec = (df_novo['Line identifier'] == l_id) & \
-                                              (df_novo['Task Code'] == t_code) & \
-                                              (df_novo['Activity Name'] == a_name) & \
-                                              (df_novo['Resource Name'] == novo_rec)
-                            
+                            mask_tarefa_rec = (df_novo['Line identifier'] == l_id) & (df_novo['Task Code'] == t_code) & (df_novo['Activity Name'] == a_name) & (df_novo['Resource Name'] == novo_rec)
                             df_novo.loc[mask_tarefa_rec, 'Planned start'] = novo_inicio
                             df_novo.loc[mask_tarefa_rec, 'Planned finish'] = novo_fim
                             
-                            mask_tarefa = (df_novo['Line identifier'] == l_id) & \
-                                          (df_novo['Task Code'] == t_code) & \
-                                          (df_novo['Activity Name'] == a_name)
+                            mask_tarefa = (df_novo['Line identifier'] == l_id) & (df_novo['Task Code'] == t_code) & (df_novo['Activity Name'] == a_name)
                             df_novo.loc[mask_tarefa, 'RTC_ID'] = novo_rtc
                             
                         st.session_state['df_simulado'] = df_novo
@@ -413,11 +363,10 @@ def render_editor():
     # --- ABA 4: DIVISÃO MANUAL POR MÊS ---
     with tab_dividir:
         st.write("### ✂️ Distribuição Manual por Mês")
-        st.write("Ajuste exatamente quantas horas um recurso vai gastar em cada mês para uma tarefa específica. Ideal para tarefas longas que precisam de distribuição irregular (ex: 40h em Ago, 30h em Set, 110h em Out).")
+        st.write("Ajuste exatamente quantas horas um recurso vai gastar em cada mês para uma tarefa específica. Ideal para tarefas longas que precisam de distribuição irregular.")
         
         col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            busca_nome_d = st.text_input("🔍 Buscar Tarefa:", "", key="busca_dividir")
+        with col_d1: busca_nome_d = st.text_input("🔍 Buscar Tarefa:", "", key="busca_dividir")
         with col_d2:
             task_codes_list_d = [""] + sorted(df_simulado['Task Code'].dropna().unique().tolist())
             busca_task_d = st.selectbox("📁 Filtrar Task Code:", task_codes_list_d, key="task_dividir")
@@ -433,16 +382,13 @@ def render_editor():
         if tarefa_selecionada_d:
             t_code, a_name = tarefa_selecionada_d.split(" | ")
             recursos_tarefa = df_simulado[(df_simulado['Task Code'] == t_code) & (df_simulado['Activity Name'] == a_name)]['Resource Name'].dropna().unique()
-            
             rec_selecionado_d = st.selectbox("2️⃣ Selecione o Recurso:", [""] + list(recursos_tarefa), key="sel_rec_dividir")
             
             if rec_selecionado_d:
                 df_aloc = df_simulado[(df_simulado['Task Code'] == t_code) & (df_simulado['Activity Name'] == a_name) & (df_simulado['Resource Name'] == rec_selecionado_d)]
-                
                 df_meses_edit = df_aloc.groupby('Mes')['Horas_Alocadas'].sum().reset_index()
                 
                 st.write(f"**Total de Horas Atual desta Tarefa:** {df_meses_edit['Horas_Alocadas'].sum():.1f}h")
-                
                 meses_disponiveis = sorted(df_simulado['Mes'].dropna().unique(), key=lambda x: pd.to_datetime(x, format='%m/%Y'))
                 
                 with st.form("form_dividir_meses"):
@@ -452,18 +398,11 @@ def render_editor():
                         "Horas_Alocadas": st.column_config.NumberColumn("Horas no Mês", min_value=0.0, format="%.1f", required=True)
                     }
                     
-                    df_meses_editado = st.data_editor(
-                        df_meses_edit,
-                        column_config=config_meses,
-                        num_rows="dynamic",
-                        use_container_width=True,
-                        key="editor_dividir_meses"
-                    )
+                    df_meses_editado = st.data_editor(df_meses_edit, column_config=config_meses, num_rows="dynamic", use_container_width=True, key="editor_dividir_meses")
                     
                     if st.form_submit_button("💾 Salvar Distribuição Manual"):
                         mask_remover = (df_simulado['Task Code'] == t_code) & (df_simulado['Activity Name'] == a_name) & (df_simulado['Resource Name'] == rec_selecionado_d)
                         df_novo = df_simulado[~mask_remover].copy()
-                        
                         info_estatica = df_aloc.iloc[0].copy()
                         
                         novas_linhas = []
@@ -478,18 +417,7 @@ def render_editor():
                             df_novo = pd.concat([df_novo, pd.DataFrame(novas_linhas)], ignore_index=True)
                             
                         st.session_state['df_simulado'] = df_novo
-                        
-                        # --- REGISTRO DE LOG ---
-                        registrar_log(
-                            user_id=usuario,
-                            action="UPDATE",
-                            table_affected="tasks_odyc",
-                            record_id=t_code,
-                            field_changed="Distribuição Manual",
-                            old_value=f"{df_meses_edit['Horas_Alocadas'].sum():.1f}h",
-                            new_value=f"{df_meses_editado['Horas_Alocadas'].sum():.1f}h"
-                        )
-                        
+                        registrar_log(usuario, "UPDATE", "tasks_odyc", t_code, "Distribuição Manual", f"{df_meses_edit['Horas_Alocadas'].sum():.1f}h", f"{df_meses_editado['Horas_Alocadas'].sum():.1f}h")
                         st.success("✅ Distribuição salva com sucesso!")
                         clear_ui_state()
                         st.rerun()
