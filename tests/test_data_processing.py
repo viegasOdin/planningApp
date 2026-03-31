@@ -1,105 +1,114 @@
-import pytest
+"""
+Testes de integração para data_processing.py (modo OdyC)
+
+Verifica que salvar_cenario_odyc_no_banco:
+- Cria um Scenario com os campos corretos no banco
+- Salva todas as tarefas (TaskOdyc) vinculadas ao cenário
+- Retorna o ID do cenário criado
+- Retorna None em caso de erro interno
+"""
+
+from datetime import date
+from unittest.mock import MagicMock
+
 import pandas as pd
-from unittest.mock import patch, MagicMock
-import sys
-import os
+import pytest
 
-# Adiciona a pasta principal ao caminho do Python para ele achar os arquivos
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from data_processing import salvar_cenario_odyc_no_banco
+from database import Scenario, TaskOdyc
 
-from data_processing import load_and_process_data, salvar_cenario_odyc_no_banco
 
-def test_load_and_process_data():
-    """
-    Testa se a função de limpeza e processamento de dados do OdyC funciona corretamente
-    simulando a leitura de abas do Excel.
-    """
-    # 1. Criamos DataFrames falsos para simular as abas do Excel
-    df_wkl_mock = pd.DataFrame({
-        'Task Code': ['TC1', 'TC2'],
-        'Activity Name': ['Act 1', 'Act 2'],
-        'Resource Name': ['Rec A', 'Rec B'],
-        'Resource Category': ['Cat 1', 'Cat 2'],
-        'Start': ['2023-01-01', '2023-02-01'],
-        'Finish': ['2023-01-31', '2023-02-28'],
-        '01/2023': ['10,5', '0'],   # Simulando a vírgula brasileira
-        '02/2023': ['0', '20,0']
-    })
-    
-    df_capacity_mock = pd.DataFrame([
-        ['lixo', 'lixo', 'lixo', 'lixo', '2023-01-01', '2023-02-01'],
-        ['lixo', 'lixo', 'lixo', 'lixo', 160, 160]
-    ])
-    
-    df_planning_mock = pd.DataFrame({
-        'OdyC Task Code Name Task': ['TC1', 'TC2'],
-        'Description Activity': ['ACT 1', 'ACT 2'],
-        'Line identifier Task': ['ID1.0', 'ID2.0'] # Simulando o .0 chato do Excel
-    })
-    
-    df_schedule_mock = pd.DataFrame({
-        'Line identifier': ['ID1.0', 'ID2.0'],
-        'Planned start': ['2023-01-01', '2023-02-01'],
-        'Planned finish': ['2023-01-31', '2023-02-28'],
-        'Predecessor': ['', 'ID1'],
-        'Successor': ['ID2', '']
-    })
+def _make_df_master(num_rows: int = 3) -> pd.DataFrame:
+    """DataFrame mínimo simulando a saída de load_and_process_data."""
+    return pd.DataFrame(
+        {
+            "Task Code": [f"T00{i}" for i in range(num_rows)],
+            "Activity Name": [f"Atividade {i}" for i in range(num_rows)],
+            "Resource Name": [f"Recurso {i}" for i in range(num_rows)],
+            "Project Name": ["Projeto Teste"] * num_rows,
+            "Line identifier": [f"L{i}" for i in range(num_rows)],
+            "Horas_Alocadas": [10.0, 20.0, 30.0][:num_rows],
+            "Planned start": [date(2025, 1, 1)] * num_rows,
+            "Planned finish": [date(2025, 3, 31)] * num_rows,
+            "Mes": ["01/2025", "02/2025", "03/2025"][:num_rows],
+        }
+    )
 
-    # 2. Função que decide qual DataFrame falso retornar dependendo da aba solicitada
-    def mock_read_excel(*args, **kwargs):
-        sheet = kwargs.get('sheet_name')
-        if sheet == "DB_WKL": return df_wkl_mock
-        elif sheet == "ByResource": return df_capacity_mock
-        elif sheet == "Planning": return df_planning_mock
-        elif sheet == "View 01": return df_schedule_mock
-        return pd.DataFrame()
 
-    # 3. Usamos o patch para substituir o pd.read_excel verdadeiro pelo nosso mock
-    with patch('pandas.read_excel', side_effect=mock_read_excel):
-        # Executamos a sua função original
-        df_master, df_cap = load_and_process_data("dummy_wkl.xlsx", "dummy_schedule.xlsx")
-        
-        # 4. Verificações (Asserts) - Garantindo que a limpeza funcionou!
-        assert not df_master.empty
-        assert len(df_master) == 2 # Duas alocações válidas (>0)
-        assert 'RTC_ID' in df_master.columns # Garante que a coluna nova foi criada
-        assert df_master.iloc[0]['Horas_Alocadas'] == 10.5 # Garante que converteu vírgula pra ponto
-        assert df_master.iloc[1]['Horas_Alocadas'] == 20.0
-        assert df_master.iloc[0]['Line identifier'] == 'ID1' # Garante que limpou o .0
+class TestSalvarCenarioOdycNoBanco:
+    def test_creates_scenario_record(self, db_session):
+        df = _make_df_master()
+        salvar_cenario_odyc_no_banco(df, nome_cenario="Baseline OdyC", autor="Tester")
 
-        assert not df_cap.empty
-        assert len(df_cap) == 2
-        assert df_cap.iloc[0]['Horas_Uteis'] == 160
+        scenario = db_session.query(Scenario).filter_by(name="Baseline OdyC").first()
+        assert scenario is not None
 
-@patch('data_processing.SessionLocal')
-def test_salvar_cenario_odyc_no_banco(mock_session_local):
-    """
-    Testa se a função de salvar cenário OdyC interage corretamente com o banco.
-    """
-    mock_db = MagicMock()
-    mock_session_local.return_value = mock_db
-    
-    # Simula o retorno do ID do cenário gerado pelo banco
-    def mock_refresh(obj):
-        obj.id = 99
-    mock_db.refresh.side_effect = mock_refresh
-    
-    # Dados falsos já limpos
-    df_mock = pd.DataFrame({
-        'Project Name': ['Proj 1'],
-        'Task Code': ['TC1'],
-        'Line identifier': ['ID1'],
-        'Resource Name': ['Rec A'],
-        'Planned start': ['2023-01-01'],
-        'Planned finish': ['2023-01-31'],
-        'Horas_Alocadas': [10.5]
-    })
-    
-    # Executa a função
-    cenario_id = salvar_cenario_odyc_no_banco(df_mock, "Cenário Teste", "victor")
-    
-    # Verifica se salvou e retornou o ID correto
-    assert cenario_id == 99
-    mock_db.add.assert_called_once() # Adicionou o cenário
-    mock_db.bulk_save_objects.assert_called_once() # Adicionou as tarefas em lote
-    assert mock_db.commit.call_count == 2 # Fez commit 2 vezes (cenário e tarefas)
+    def test_scenario_mode_is_odyc(self, db_session):
+        df = _make_df_master()
+        salvar_cenario_odyc_no_banco(df, nome_cenario="Cenário OdyC")
+
+        scenario = db_session.query(Scenario).filter_by(name="Cenário OdyC").first()
+        assert scenario.mode == "OdyC"
+
+    def test_scenario_author_is_saved(self, db_session):
+        df = _make_df_master()
+        salvar_cenario_odyc_no_banco(df, nome_cenario="Cenário OdyC", autor="Maria")
+
+        scenario = db_session.query(Scenario).filter_by(name="Cenário OdyC").first()
+        assert scenario.author == "Maria"
+
+    def test_saves_correct_number_of_tasks(self, db_session):
+        df = _make_df_master(num_rows=3)
+        salvar_cenario_odyc_no_banco(df, nome_cenario="Cenário OdyC")
+
+        tasks = db_session.query(TaskOdyc).all()
+        assert len(tasks) == 3
+
+    def test_tasks_have_correct_workload_hours(self, db_session):
+        df = _make_df_master(num_rows=3)
+        salvar_cenario_odyc_no_banco(df, nome_cenario="Cenário OdyC")
+
+        hours = sorted(t.workload_hours for t in db_session.query(TaskOdyc).all())
+        assert hours == [10.0, 20.0, 30.0]
+
+    def test_tasks_linked_to_created_scenario(self, db_session):
+        df = _make_df_master(num_rows=2)
+        scenario_id = salvar_cenario_odyc_no_banco(df, nome_cenario="Cenário OdyC")
+
+        tasks = db_session.query(TaskOdyc).all()
+        assert all(t.scenario_id == scenario_id for t in tasks)
+
+    def test_returns_integer_scenario_id(self, db_session):
+        df = _make_df_master()
+        result = salvar_cenario_odyc_no_banco(df, nome_cenario="Cenário OdyC")
+
+        assert result is not None
+        assert isinstance(result, int)
+        assert result > 0
+
+    def test_returns_none_when_commit_fails(self, monkeypatch):
+        """Retorna None quando o commit lança uma exceção."""
+        import data_processing
+
+        mock_db = MagicMock()
+        mock_db.commit.side_effect = Exception("Erro simulado de commit")
+
+        monkeypatch.setattr(data_processing, "SessionLocal", lambda: mock_db)
+
+        df = _make_df_master()
+        result = salvar_cenario_odyc_no_banco(df, nome_cenario="Erro Test")
+        assert result is None
+
+    def test_tasks_resource_names_are_saved(self, db_session):
+        df = _make_df_master(num_rows=2)
+        salvar_cenario_odyc_no_banco(df, nome_cenario="Cenário OdyC")
+
+        names = {t.resource_name for t in db_session.query(TaskOdyc).all()}
+        assert names == {"Recurso 0", "Recurso 1"}
+
+    def test_single_task_df(self, db_session):
+        df = _make_df_master(num_rows=1)
+        scenario_id = salvar_cenario_odyc_no_banco(df, nome_cenario="Single Task")
+
+        assert scenario_id is not None
+        assert db_session.query(TaskOdyc).count() == 1

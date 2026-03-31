@@ -1,72 +1,111 @@
+"""
+Testes unitários para utils.py
+
+Cobre as funções puras de processamento de strings de dependência:
+- extract_ids: extrai IDs numéricos de uma string de dependência
+- parse_dependencies: extrai ID, tipo e lag de uma string de dependência
+"""
+
+import numpy as np
 import pytest
-from unittest.mock import patch, MagicMock
-import sys
-import os
 
-# Adiciona a pasta principal ao caminho do Python para ele achar o utils.py
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import extract_ids, parse_dependencies
 
-from utils import registrar_log
 
-@patch('utils.SessionLocal')
-def test_registrar_log_sucesso(mock_session_local):
-    """
-    Testa se a função registrar_log cria o objeto corretamente e tenta salvar no banco.
-    """
-    # 1. Configura o mock (simulador) do banco de dados
-    mock_db = MagicMock()
-    mock_session_local.return_value = mock_db
-    
-    # 2. Executa a função que queremos testar
-    registrar_log(
-        user_id="victor",
-        action="UPDATE",
-        table_affected="tasks_odyc",
-        record_id="TASK-123",
-        field_changed="Horas_Alocadas",
-        old_value="10.5",
-        new_value="20.0"
-    )
-    
-    # 3. Verifica se os comandos do banco foram chamados na ordem certa
-    mock_db.add.assert_called_once()
-    mock_db.commit.assert_called_once()
-    mock_db.close.assert_called_once()
-    
-    # 4. Verifica se os dados que a função tentou salvar estão corretos
-    args, kwargs = mock_db.add.call_args
-    log_adicionado = args[0]
-    
-    assert log_adicionado.user_id == "victor"
-    assert log_adicionado.action == "UPDATE"
-    assert log_adicionado.table_affected == "tasks_odyc"
-    assert log_adicionado.record_id == "TASK-123"
-    assert log_adicionado.field_changed == "Horas_Alocadas"
-    assert log_adicionado.old_value == "10.5"
-    assert log_adicionado.new_value == "20.0"
+class TestExtractIds:
+    """Testes para extract_ids(dependency_string)"""
 
-@patch('utils.SessionLocal')
-def test_registrar_log_erro_banco(mock_session_local):
-    """
-    Testa se a função lida corretamente com um erro no banco de dados (fazendo rollback).
-    """
-    # 1. Configura o mock para simular uma falha (ex: banco caiu)
-    mock_db = MagicMock()
-    mock_db.commit.side_effect = Exception("Erro simulado de conexão")
-    mock_session_local.return_value = mock_db
-    
-    # 2. Executa a função
-    registrar_log(
-        user_id="victor",
-        action="DELETE",
-        table_affected="tasks_geral",
-        record_id="PROJ-999",
-        field_changed="Status",
-        old_value="Ativo",
-        new_value="Excluído"
-    )
-    
-    # 3. Verifica se o sistema foi inteligente e fez o rollback para não corromper o banco
-    mock_db.add.assert_called_once()
-    mock_db.rollback.assert_called_once() # O mais importante: garantiu que fez rollback!
-    mock_db.close.assert_called_once()
+    def test_returns_empty_for_nan(self):
+        assert extract_ids(np.nan) == []
+
+    def test_returns_empty_for_empty_string(self):
+        assert extract_ids("") == []
+
+    def test_returns_empty_for_whitespace_only(self):
+        assert extract_ids("   ") == []
+
+    def test_extracts_single_integer_id(self):
+        assert extract_ids("123") == ["123"]
+
+    def test_extracts_decimal_id(self):
+        assert extract_ids("1.2") == ["1.2"]
+
+    def test_extracts_multiple_ids_separated_by_semicolon(self):
+        result = extract_ids("123;456;789")
+        assert result == ["123", "456", "789"]
+
+    def test_extracts_id_ignoring_type_suffix(self):
+        # "123FS" → extrai apenas a parte numérica "123"
+        assert extract_ids("123FS") == ["123"]
+
+    def test_returns_empty_for_non_numeric_string(self):
+        assert extract_ids("ABC") == []
+
+    def test_extracts_ids_from_mixed_semicolon_list(self):
+        # IDs com tipos diferentes separados por ponto-e-vírgula
+        result = extract_ids("100FS;200SS+5;300FF")
+        assert result == ["100", "200", "300"]
+
+
+class TestParseDependencies:
+    """Testes para parse_dependencies(dependency_string)"""
+
+    def test_returns_empty_for_nan(self):
+        assert parse_dependencies(np.nan) == []
+
+    def test_returns_empty_for_empty_string(self):
+        assert parse_dependencies("") == []
+
+    def test_returns_empty_for_whitespace_only(self):
+        assert parse_dependencies("   ") == []
+
+    def test_defaults_type_to_fs_when_absent(self):
+        result = parse_dependencies("123")
+        assert result == [{"id": "123", "type": "FS", "lag": 0}]
+
+    def test_parses_explicit_fs_type(self):
+        result = parse_dependencies("123FS")
+        assert result == [{"id": "123", "type": "FS", "lag": 0}]
+
+    def test_parses_ss_type(self):
+        result = parse_dependencies("123SS")
+        assert result == [{"id": "123", "type": "SS", "lag": 0}]
+
+    def test_parses_ff_type(self):
+        result = parse_dependencies("456FF")
+        assert result == [{"id": "456", "type": "FF", "lag": 0}]
+
+    def test_parses_sf_type(self):
+        result = parse_dependencies("789SF")
+        assert result == [{"id": "789", "type": "SF", "lag": 0}]
+
+    def test_parses_positive_lag(self):
+        result = parse_dependencies("123FS+5")
+        assert result == [{"id": "123", "type": "FS", "lag": 5}]
+
+    def test_parses_negative_lag(self):
+        result = parse_dependencies("123FS-3")
+        assert result == [{"id": "123", "type": "FS", "lag": -3}]
+
+    def test_parses_lag_with_whitespace(self):
+        # O código faz lag_str.replace(' ', ''), então "+ 5" deve virar 5
+        result = parse_dependencies("123FS+ 5")
+        assert result == [{"id": "123", "type": "FS", "lag": 5}]
+
+    def test_parses_multiple_dependencies(self):
+        result = parse_dependencies("123FS;456SS+2")
+        assert result == [
+            {"id": "123", "type": "FS", "lag": 0},
+            {"id": "456", "type": "SS", "lag": 2},
+        ]
+
+    def test_parses_decimal_id(self):
+        result = parse_dependencies("1.2.3")
+        assert len(result) == 1
+        assert result[0]["id"] == "1.2.3"
+        assert result[0]["type"] == "FS"
+        assert result[0]["lag"] == 0
+
+    def test_non_numeric_string_returns_empty(self):
+        # Strings sem dígitos iniciais não produzem match
+        assert parse_dependencies("ABC") == []

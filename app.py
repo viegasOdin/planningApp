@@ -204,17 +204,22 @@ if modo == "OdyC":
                 
                 recursos_disponiveis = sorted(df_simulado['Resource Name'].dropna().unique())
                 recursos_filtro = recursos_disponiveis
-                
+
                 if opcao_grupo in GRUPOS:
                     recursos_filtro = GRUPOS[opcao_grupo]
                 elif opcao_grupo == "Personalizado":
-                    recursos_filtro = st.sidebar.multiselect("Selecione os recursos:", recursos_disponiveis, default=recursos_disponiveis)
-                
+                    recursos_filtro = st.sidebar.multiselect(
+                        "Selecione os recursos:",
+                        recursos_disponiveis,
+                        default=recursos_disponiveis,
+                        help="Escolha os recursos a exibir em todas as abas.",
+                    )
+
                 df_simulado_view = df_simulado[df_simulado['Resource Name'].isin(recursos_filtro)].copy() if recursos_filtro else df_simulado.copy()
 
                 # --- NOVIDADE: ABA DE FÉRIAS ---
                 aba_dash, aba_gantt, aba_heatmap, aba_simulador, aba_matricial, aba_ferias, aba_changelog, aba_comparador = st.tabs([
-                    "📈 Dashboard Geral", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🌴 Férias e Ausências", "🕵️ Histórico", "⚖️ Comparar Versões"
+                    "📈 Dashboard", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🌴 Férias e Ausências", "🕵️ Histórico", "⚖️ Comparar Versões"
                 ])
                 
                 with aba_dash: render_dashboard(df_simulado_view)
@@ -318,12 +323,18 @@ elif modo == "Workload Geral":
                 if opcao_grupo in GRUPOS:
                     recursos_filtro = GRUPOS[opcao_grupo]
                 elif opcao_grupo == "Personalizado":
-                    recursos_filtro = st.sidebar.multiselect("Selecione os recursos:", recursos_disponiveis, default=recursos_disponiveis, key="multi_rec_geral")
+                    recursos_filtro = st.sidebar.multiselect(
+                        "Selecione os recursos:",
+                        recursos_disponiveis,
+                        default=recursos_disponiveis,
+                        key="multi_rec_geral",
+                        help="Escolha os recursos a exibir em todas as abas.",
+                    )
                 
                 df_geral_view = df_geral[df_geral['Resource Name'].isin(recursos_filtro)].copy() if recursos_filtro else df_geral.copy()
                 
                 # --- NOVIDADE: ABA DE FÉRIAS ---
-                abas_titulos = ["📈 Dashboard", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🌴 Férias e Ausências", "🕵️ Histórico", "⚖️ Comparar Versões"]
+                abas_titulos = ["📈 Dashboard", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🌴 Férias e Ausências", "🕵️ Histórico", "⚖️ Comparar Versões"]  # idêntico ao modo OdyC
                 abas = st.tabs(abas_titulos)
                 
                 with abas[0]: render_dashboard_geral(df_geral_view)
@@ -333,7 +344,7 @@ elif modo == "Workload Geral":
                 with abas[4]: render_editor_matricial_geral()
                 with abas[5]: render_absences_manager(df_geral_view)
                 with abas[6]: render_changelog_geral(st.session_state['df_original_geral'], df_geral)
-                with abas[7]: render_comparator("Workload Geral")
+                with abas[7]: render_comparator("Geral")
                     
             except Exception as e:
                 st.error(f"Erro ao processar a planilha Geral: {e}")

@@ -3,8 +3,8 @@ import pandas as pd
 import plotly.express as px
 
 def render_comparator_geral(df_base, df_atual):
-    st.subheader("⚖️ Comparativo: Baseline vs. Mês Atual")
-    st.write("Analise a evolução do Workload em relação ao mês anterior. Valores positivos indicam aumento de horas, valores negativos indicam redução.")
+    st.subheader("⚖️ Comparativo: Baseline vs. Simulação Atual")
+    st.caption("Analise a evolução do Workload em relação ao baseline. Valores positivos indicam aumento de horas, negativos indicam redução.")
 
     # 1. KPIs Principais
     total_base = df_base['Horas_Alocadas'].sum()
@@ -12,11 +12,11 @@ def render_comparator_geral(df_base, df_atual):
     delta_total = total_atual - total_base
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total de Horas (Baseline)", f"{total_base:,.1f}h")
-    col2.metric("Total de Horas (Atual)", f"{total_atual:,.1f}h")
-    col3.metric("Variação Global (Delta)", f"{delta_total:+,.1f}h", delta=round(delta_total, 1))
+    col1.metric("Horas — Baseline", f"{total_base:,.1f}h")
+    col2.metric("Horas — Simulação Atual", f"{total_atual:,.1f}h")
+    col3.metric("Variação Global", f"{delta_total:+,.1f}h", delta=round(delta_total, 1), delta_color="inverse")
 
-    st.write("---")
+    st.divider()
 
     # 2. Agrupamentos para Gráficos (Variação)
     # Variação por Recurso
@@ -58,8 +58,8 @@ def render_comparator_geral(df_base, df_atual):
         else:
             st.info("Nenhuma variação de horas por projeto.")
 
-    st.write("---")
-    st.write("### 🔍 Entradas e Saídas (Alocações)")
+    st.divider()
+    st.write("### 🔍 Entradas e Saídas de Alocações")
 
     # 3. Identificar tarefas Novas e Removidas
     base_tasks = df_base[['Project Name', 'Activity Name', 'Resource Name']].drop_duplicates()

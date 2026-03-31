@@ -37,34 +37,45 @@ def calcular_dias_uteis_ferias(mes_str, start_date, end_date):
     return 0
 
 def render_dashboard_geral(df_geral):
-    st.subheader("📈 Visão Geral de Horas (Workload Geral)")
+    st.subheader("📈 Dashboard")
+
     df_valid = df_geral.copy()
     if df_valid.empty:
         st.warning("Sem dados para exibir.")
         return
-        
+
     df_valid['Mes_Date'] = pd.to_datetime(df_valid['Mes'], format='%m/%Y')
     min_date = df_valid['Mes_Date'].min().date()
     max_date = df_valid['Mes_Date'].max().date()
-    
-    col_filt1, col_filt2 = st.columns([1, 2])
+
+    col_filt1, col_filt2 = st.columns([1, 3])
     with col_filt1:
-        datas_selecionadas = st.date_input("📅 Filtrar por Período:", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="dash_date_geral")
-        
+        datas_selecionadas = st.date_input(
+            "📅 Filtrar por Período:",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="dash_date_geral",
+            help="Filtra os gráficos e métricas para o intervalo de meses selecionado.",
+        )
+
     if len(datas_selecionadas) == 2:
         data_inicio, data_fim = datas_selecionadas
-        df_valid = df_valid[(df_valid['Mes_Date'].dt.date >= data_inicio.replace(day=1)) & (df_valid['Mes_Date'].dt.date <= data_fim)]
-        
+        df_valid = df_valid[
+            (df_valid['Mes_Date'].dt.date >= data_inicio.replace(day=1))
+            & (df_valid['Mes_Date'].dt.date <= data_fim)
+        ]
+
     total_horas = df_valid['Horas_Alocadas'].sum()
     total_projetos = df_valid['Project Name'].nunique()
     total_recursos = df_valid['Resource Name'].nunique()
-    
+
     col1, col2, col3 = st.columns(3)
     col1.metric("Total de Horas Alocadas", f"{total_horas:,.1f}h")
     col2.metric("Projetos Ativos", total_projetos)
     col3.metric("Recursos Envolvidos", total_recursos)
-    
-    st.write("---")
+
+    st.divider()
     col_graf1, col_graf2 = st.columns(2)
     
     with col_graf1:
@@ -82,7 +93,7 @@ def render_dashboard_geral(df_geral):
         st.plotly_chart(fig_rec, use_container_width=True)
 
 def render_gantt_geral(df_geral):
-    st.subheader("📊 Gráfico de Gantt (Workload Geral)")
+    st.subheader("📊 Gantt")
     df_valid_dates = df_geral.dropna(subset=['Planned start', 'Planned finish']).copy()
     
     if df_valid_dates.empty:
@@ -96,11 +107,23 @@ def render_gantt_geral(df_geral):
 
     col1, col2 = st.columns(2)
     with col1:
-        recurso_busca = st.text_input("🔍 Filtrar por Recurso:", "", key="busca_gantt_geral").strip().lower()
+        recurso_busca = st.text_input(
+            "🔍 Filtrar por Recurso:",
+            "",
+            key="busca_gantt_geral",
+            help="Digite parte do nome do recurso para filtrar as barras do Gantt.",
+        ).strip().lower()
     with col2:
         min_date = df_gantt['Planned start'].min()
         max_date = df_gantt['Planned finish'].max()
-        datas_selecionadas = st.date_input("📅 Filtrar por Período:", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="data_gantt_geral")
+        datas_selecionadas = st.date_input(
+            "📅 Período:",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="data_gantt_geral",
+            help="Filtra as tarefas cujo período se sobreponha ao intervalo selecionado.",
+        )
 
     df_filtrado = df_gantt.copy()
     
@@ -135,22 +158,35 @@ def render_gantt_geral(df_geral):
     st.plotly_chart(fig, use_container_width=True, key="chart_gantt_geral")
 
 def render_heatmap_geral(df_geral, df_cap_geral):
-    st.subheader("🔥 Heatmap de Capacidade vs. Demanda (Workload Geral)")
-    
+    st.subheader("🔥 Heatmap de Capacidade")
+
     df_simulado_copy = df_geral.copy()
     df_simulado_copy['Mes_Date'] = pd.to_datetime(df_simulado_copy['Mes'], format='%m/%Y')
-        
+
     recursos_disponiveis = sorted(df_simulado_copy['Resource Name'].dropna().unique())
     min_date = df_simulado_copy['Mes_Date'].min().date()
     max_date = df_simulado_copy['Mes_Date'].max().date()
-    
+
     with st.form(key='form_filtros_heatmap_geral'):
         col1, col2 = st.columns(2)
         with col1:
-            recursos_selecionados = st.multiselect("👥 Selecione os Recursos:", options=recursos_disponiveis, default=[], key="heat_rec_filter_geral")
+            recursos_selecionados = st.multiselect(
+                "👥 Recursos:",
+                options=recursos_disponiveis,
+                default=[],
+                key="heat_rec_filter_geral",
+                help="Selecione os recursos a exibir. Vazio = todos.",
+            )
         with col2:
-            periodo_selecionado = st.date_input("📅 Período (Mês):", value=(min_date, max_date), min_value=min_date, max_value=max_date, key="heat_date_filter_geral")
-        submit_button = st.form_submit_button(label='🚀 Aplicar Filtros')
+            periodo_selecionado = st.date_input(
+                "📅 Período:",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                key="heat_date_filter_geral",
+                help="Filtra os meses exibidos no heatmap.",
+            )
+        submit_button = st.form_submit_button(label='🚀 Aplicar Filtros', use_container_width=True)
         
     df_filtrado = df_simulado_copy.copy()
     
