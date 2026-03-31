@@ -10,6 +10,7 @@ from visualizations import render_gantt, render_heatmap, render_dashboard, rende
 from editor import render_editor
 from editor_matricial import render_editor_matricial
 from comparator import render_comparator
+from absences import render_absences_manager # <-- NOVIDADE
 
 # Importações Módulo Geral (Workload)
 from data_processing_geral import load_and_process_geral, salvar_cenario_geral_no_banco
@@ -156,7 +157,6 @@ if modo == "OdyC":
         else:
             st.sidebar.warning("Nenhum dado para salvar.")
             
-    # --- NOVIDADE: FORMULÁRIO PARA NOMEAR A VERSÃO NO BANCO (ODYC) ---
     with st.sidebar.form("form_save_odyc"):
         st.write("Salvar no Banco de Dados (Comparador)")
         data_hora_atual = datetime.now().strftime('%d/%m/%Y %H:%M')
@@ -209,8 +209,9 @@ if modo == "OdyC":
                 
                 df_simulado_view = df_simulado[df_simulado['Resource Name'].isin(recursos_filtro)].copy() if recursos_filtro else df_simulado.copy()
 
-                aba_dash, aba_gantt, aba_heatmap, aba_simulador, aba_matricial, aba_changelog, aba_comparador = st.tabs([
-                    "📈 Dashboard Geral", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🕵️ Histórico", "⚖️ Comparar Versões"
+                # --- NOVIDADE: ABA DE FÉRIAS ---
+                aba_dash, aba_gantt, aba_heatmap, aba_simulador, aba_matricial, aba_ferias, aba_changelog, aba_comparador = st.tabs([
+                    "📈 Dashboard Geral", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🌴 Férias e Ausências", "🕵️ Histórico", "⚖️ Comparar Versões"
                 ])
                 
                 with aba_dash: render_dashboard(df_simulado_view)
@@ -218,6 +219,7 @@ if modo == "OdyC":
                 with aba_heatmap: render_heatmap(df_simulado_view, df_capacidade, key_suffix="simulado")
                 with aba_simulador: render_editor()
                 with aba_matricial: render_editor_matricial()
+                with aba_ferias: render_absences_manager(df_simulado_view)
                 with aba_changelog: render_changelog(df_original, df_simulado)
                 with aba_comparador: render_comparator("OdyC")
                     
@@ -268,7 +270,6 @@ elif modo == "Workload Geral":
     st.sidebar.markdown("---")
     st.sidebar.header("💾 Salvar Versão")
 
-    # --- NOVIDADE: FORMULÁRIO PARA NOMEAR A VERSÃO NO BANCO (GERAL) ---
     with st.sidebar.form("form_save_geral"):
         st.write("Salvar no Banco de Dados (Comparador)")
         data_hora_atual = datetime.now().strftime('%d/%m/%Y %H:%M')
@@ -318,7 +319,8 @@ elif modo == "Workload Geral":
                 
                 df_geral_view = df_geral[df_geral['Resource Name'].isin(recursos_filtro)].copy() if recursos_filtro else df_geral.copy()
                 
-                abas_titulos = ["📈 Dashboard", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🕵️ Histórico", "⚖️ Comparar Versões"]
+                # --- NOVIDADE: ABA DE FÉRIAS ---
+                abas_titulos = ["📈 Dashboard", "📊 Gantt", "🔥 Capacidade", "✏️ Simulador", "📁 Matriz Editável", "🌴 Férias e Ausências", "🕵️ Histórico", "⚖️ Comparar Versões"]
                 abas = st.tabs(abas_titulos)
                 
                 with abas[0]: render_dashboard_geral(df_geral_view)
@@ -326,8 +328,9 @@ elif modo == "Workload Geral":
                 with abas[2]: render_heatmap_geral(df_geral_view, df_cap_geral)
                 with abas[3]: render_editor_geral()
                 with abas[4]: render_editor_matricial_geral()
-                with abas[5]: render_changelog_geral(st.session_state['df_original_geral'], df_geral)
-                with abas[6]: render_comparator("Workload Geral")
+                with abas[5]: render_absences_manager(df_geral_view)
+                with abas[6]: render_changelog_geral(st.session_state['df_original_geral'], df_geral)
+                with abas[7]: render_comparator("Workload Geral")
                     
             except Exception as e:
                 st.error(f"Erro ao processar a planilha Geral: {e}")
