@@ -11,6 +11,7 @@ from editor import render_editor
 from editor_matricial import render_editor_matricial
 from comparator import render_comparator
 from absences import render_absences_manager # <-- NOVIDADE
+from database import init_db
 
 # Importações Módulo Geral (Workload)
 from data_processing_geral import load_and_process_geral, salvar_cenario_geral_no_banco
@@ -20,7 +21,9 @@ from editor_matricial_geral import render_editor_matricial_geral
 
 st.set_page_config(page_title="Gerenciador de Projetos", layout="wide")
 
-# 
+init_db()
+
+#
 # 🔒 SISTEMA DE LOGIN
 # 
 USUARIOS = {
